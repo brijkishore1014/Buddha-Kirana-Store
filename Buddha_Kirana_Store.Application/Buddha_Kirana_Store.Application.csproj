@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Use the same .NET version as your MAUI app (without the -android/-windows suffix). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Buddha_Kirana_Store</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Match this to the Microsoft.Extensions.* version your MAUI app already uses. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.13" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Buddha_Kirana_Store.Domain\Buddha_Kirana_Store.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

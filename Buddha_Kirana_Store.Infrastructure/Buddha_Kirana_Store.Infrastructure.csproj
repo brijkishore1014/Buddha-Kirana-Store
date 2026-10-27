@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Use the same .NET version as your MAUI app (without the -android/-windows suffix). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Buddha_Kirana_Store.Data</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The Npgsql provider's major version must match your EF Core / .NET version (10.x for .NET 10, 9.x for .NET 9, 8.x for .NET 8). -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.13">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Buddha_Kirana_Store.Application\Buddha_Kirana_Store.Application.csproj" />
+    <ProjectReference Include="..\Buddha_Kirana_Store.Domain\Buddha_Kirana_Store.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

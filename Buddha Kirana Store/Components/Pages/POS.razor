@@ -1,0 +1,455 @@
+﻿@page "/pos"
+@inject ICustomerService CustomerService
+@inject IItemService ItemService
+@inject ISalesService SalesService
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<div class="d-flex justify-space-between align-center mb-3">
+    <MudText Typo="Typo.h5" Style="font-weight:600;">POS Sale / Counter Billing</MudText>
+    <div class="d-flex gap-2 align-center">
+        <!-- BILLING MODE TOGGLE: PER-ITEM VS LUMP-SUM -->
+        <MudPaper Outlined="true" Class="px-3 py-1 d-flex align-center gap-2" Style="background-color: #fff;">
+            <MudText Typo="Typo.body2"><b>Billing Mode:</b></MudText>
+            <MudRadioGroup T="BillingMode" Value="billingMode" ValueChanged="OnBillingModeChanged">
+                <MudRadio Value="BillingMode.PerItem" Color="Color.Primary" Dense="true">Per-Item Price</MudRadio>
+                <MudRadio Value="BillingMode.LumpSum" Color="Color.Secondary" Dense="true">Lump-sum Total Price</MudRadio>
+            </MudRadioGroup>
+        </MudPaper>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.History" OnClick="@(() => Nav.NavigateTo("/sales"))">
+            Sales History
+        </MudButton>
+    </div>
+</div>
+
+<!-- 1. CUSTOMER SELECTION & PREVIOUS DEBT (UDHAAR) REMINDER -->
+<MudPaper Elevation="2" Class="pa-4 mb-4">
+    <MudGrid>
+        <MudItem xs="12" sm="6">
+            <div class="d-flex gap-2 align-center">
+                <MudSelect T="int" Label="Select Customer *" Value="selectedCustomerId" ValueChanged="OnCustomerChanged" Variant="Variant.Outlined" Margin="Margin.Dense" FullWidth="true">
+                    @foreach (var c in customers)
+                    {
+                        <MudSelectItem Value="@c.Id">
+                            @c.Name @(c.IsWalkIn ? "(Cash/UPI Only)" : $"— Phone: {c.Phone ?? "N/A"} | Pending Udhaar: ₹{c.CurrentReceivableBalance:0.00}")
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="@(() => showNewCustomerBox = !showNewCustomerBox)">
+                    + New Customer
+                </MudButton>
+            </div>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudDatePicker @bind-Date="saleDate" Label="Sale Date *" MaxDate="@DateTime.Today" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" Editable="true" />
+        </MudItem>
+        <MudItem xs="12" sm="3" Class="d-flex align-center">
+            <MudChip T="string" Color="@(billingMode == BillingMode.PerItem ? Color.Primary : Color.Secondary)" Variant="Variant.Filled">
+                @(billingMode == BillingMode.PerItem ? "Mode: Standard Per-Item Invoice" : "Mode: Lump-Sum Package Invoice")
+            </MudChip>
+        </MudItem>
+    </MudGrid>
+
+    <!-- PREVIOUS DEBT REMINDER BANNER -->
+    @if (SelectedCustomer is { IsWalkIn: false, CurrentReceivableBalance: > 0 })
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Filled" Class="mt-3" Dense="true">
+            <div class="d-flex justify-space-between align-center">
+                <span>
+                    🔔 <b>DEBT REMINDER:</b> <b>@SelectedCustomer.Name</b> already has a pending Udhaar balance of <b>₹@SelectedCustomer.CurrentReceivableBalance.ToString("0.00")</b>!
+                </span>
+                <MudButton Variant="Variant.Outlined" Color="Color.Inherit" Size="Size.Small" OnClick="@(() => Nav.NavigateTo("/customers"))">
+                    View / Settle Udhaar
+                </MudButton>
+            </div>
+        </MudAlert>
+    }
+
+    <!-- INLINE NEW CUSTOMER BOX -->
+    @if (showNewCustomerBox)
+    {
+        <MudPaper Outlined="true" Class="pa-3 mt-3" Style="background-color: #e8f5e9;">
+            <MudText Typo="Typo.subtitle2" Class="mb-2"><b>Quick Add Named Customer (For Credit / Udhaar Tracking)</b></MudText>
+            <MudGrid>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="newCustName" Label="Customer Name *" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="3">
+                    <MudTextField @bind-Value="newCustPhone" Label="Phone Number *" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="3">
+                    <MudTextField @bind-Value="newCustAddress" Label="Address / Area" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="2" Class="d-flex align-center gap-1">
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" OnClick="SaveQuickCustomer">Save</MudButton>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="@(() => showNewCustomerBox = false)">Cancel</MudButton>
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+    }
+</MudPaper>
+
+<!-- 2. ADD ITEMS TO SALE BILL (ONLY IN-STOCK ITEMS ALLOWED) -->
+<MudPaper Elevation="2" Class="pa-4 mb-4">
+    <MudText Typo="Typo.subtitle1" Class="mb-3" Style="font-weight:600;">Add Items to Sale</MudText>
+
+    <MudGrid>
+        <MudItem xs="12" sm="5">
+            <MudSelect T="int" Label="Select In-Stock Item *" Value="selectedItemId" ValueChanged="OnItemSelected" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">-- Select Item (Out-of-stock items are blocked) --</MudSelectItem>
+                @foreach (var item in AvailableItemsForSale)
+                {
+                    <MudSelectItem Value="@item.Id">
+                        @item.Name (@item.ShortCode) — Avail: @item.CurrentStock.ToString("0.###") @item.Unit?.ShortCode | MRP: ₹@item.SellingPrice.ToString("0.00")
+                    </MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudNumericField T="decimal" @bind-Value="entryQty" Label="@($"Qty ({SelectedItemUnit})")" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0.001m" />
+        </MudItem>
+
+        @if (billingMode == BillingMode.PerItem)
+        {
+            <MudItem xs="6" sm="3">
+                <MudNumericField T="decimal" @bind-Value="entrySellingPrice" Label="Unit Selling Price (₹)" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" />
+            </MudItem>
+        }
+        else
+        {
+            <MudItem xs="6" sm="3" Class="d-flex align-center">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    <i>Lump-sum mode active: Per-item prices hidden. Enter total invoice price below.</i>
+                </MudText>
+            </MudItem>
+        }
+
+        <MudItem xs="12" sm="2" Class="d-flex align-center">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" OnClick="AddItemToSale">+ Add Item</MudButton>
+        </MudItem>
+    </MudGrid>
+
+    <!-- SALE CART TABLE -->
+    <MudSimpleTable Dense="true" Hover="true" Bordered="true" Class="mt-4">
+        <thead>
+            <tr style="background-color: #eeeeee;">
+                <th>Item Name</th>
+                <th>Quantity</th>
+                @if (billingMode == BillingMode.PerItem)
+                {
+                    <th>Selling Price / Unit (₹)</th>
+                    <th>Line Total (₹)</th>
+                }
+                else
+                {
+                    <th>Reference MRP (₹)</th>
+                }
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (!cartRows.Any())
+            {
+                <tr><td colspan="5" class="text-center pa-3">No items added to this sale yet.</td></tr>
+            }
+            @foreach (var row in cartRows)
+            {
+                <tr>
+                    <td><b>@row.ItemName</b></td>
+                    <td>@row.Quantity.ToString("0.###") @row.UnitCode</td>
+                    @if (billingMode == BillingMode.PerItem)
+                    {
+                        <td>₹@row.SellingUnitPrice.ToString("0.00")</td>
+                        <td><b>₹@row.LineTotal.ToString("0.00")</b></td>
+                    }
+                    else
+                    {
+                        <td style="color: gray;">Ref: ₹@((row.Quantity * row.ReferenceMrp).ToString("0.00"))</td>
+                    }
+                    <td>
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="@(() => RemoveRow(row))" />
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+</MudPaper>
+
+<!-- 3. SETTLEMENT, LUMP-SUM TOTAL & BELOW-COST WARNING -->
+<MudPaper Elevation="3" Class="pa-4">
+    <!-- BELOW-COST WARNING BANNER -->
+    @if (cartRows.Any() && EffectiveNetTotal < TotalCartCost)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="mb-3" Dense="true">
+            ⚠️ <b>BELOW COST WARNING:</b> Your invoice total (<b>₹@EffectiveNetTotal.ToString("0.00")</b>) is <b>₹@((TotalCartCost - EffectiveNetTotal).ToString("0.00")) LESS</b> than your total purchase cost for these items (<b>₹@TotalCartCost.ToString("0.00")</b>)!
+        </MudAlert>
+    }
+
+    <MudGrid>
+        @if (billingMode == BillingMode.PerItem)
+        {
+            <MudItem xs="6" sm="2">
+                <MudText Typo="Typo.body2">SubTotal: <b>₹@PerItemSubTotal.ToString("0.00")</b></MudText>
+                <MudNumericField T="decimal" Value="discountAmount" ValueChanged="OnDiscountChanged" Label="Discount (₹)" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" />
+            </MudItem>
+            <MudItem xs="6" sm="2" Class="d-flex flex-column justify-center">
+                <MudText Typo="Typo.h6" Color="Color.Primary">Net Bill: <b>₹@EffectiveNetTotal.ToString("0.00")</b></MudText>
+                <MudText Typo="Typo.caption">Est. Cost: ₹@TotalCartCost.ToString("0.00")</MudText>
+            </MudItem>
+        }
+        else
+        {
+            <MudItem xs="12" sm="4">
+                <MudNumericField T="decimal" Value="lumpSumTotalAmount" ValueChanged="OnLumpSumTotalChanged" Label="Enter Lump-Sum Total Invoice Price (₹) *" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" HelperText="@($"Ref MRP Sum: ₹{ReferenceMrpSum:0.00} | Item Cost Sum: ₹{TotalCartCost:0.00}")" />
+            </MudItem>
+        }
+
+        <MudItem xs="6" sm="3">
+            <MudNumericField T="decimal" @bind-Value="receivedAmount" Label="Amount Received Now (₹)" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" Max="@EffectiveNetTotal" />
+        </MudItem>
+
+        <MudItem xs="6" sm="2">
+            <MudSelect T="PaymentMode" @bind-Value="paymentMode" Label="Payment Mode" Disabled="@(receivedAmount <= 0)" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="PaymentMode.Cash">Cash</MudSelectItem>
+                <MudSelectItem Value="PaymentMode.UPI">UPI</MudSelectItem>
+                <MudSelectItem Value="PaymentMode.BankTransfer">Bank Transfer</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+
+        <MudItem xs="6" sm="1" Class="d-flex flex-column justify-center">
+            <MudText Typo="Typo.caption">New Udhaar:</MudText>
+            <MudText Color="@(CreditDue > 0 ? Color.Error : Color.Success)" Style="font-weight:bold;">
+                ₹@CreditDue.ToString("0.00")
+            </MudText>
+        </MudItem>
+
+        <MudItem xs="6" sm="2" Class="d-flex align-center">
+            <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true" Size="Size.Large" OnClick="CompleteSaleAsync">
+                Complete Sale
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+@code {
+    private List<Customer> customers = [];
+    private List<Item> allItems = [];
+
+    private BillingMode billingMode = BillingMode.PerItem;
+    private int selectedCustomerId = 1;
+    private DateTime? saleDate = DateTime.Today;
+
+    // Quick Add Customer State
+    private bool showNewCustomerBox = false;
+    private string newCustName = "";
+    private string? newCustPhone;
+    private string? newCustAddress;
+
+    // Item Line Selection State
+    private int selectedItemId = 0;
+    private decimal entryQty = 1;
+    private decimal entrySellingPrice = 0;
+
+    // Settlement State
+    private decimal discountAmount = 0;
+    private decimal lumpSumTotalAmount = 0;
+    private decimal receivedAmount = 0;
+    private PaymentMode paymentMode = PaymentMode.Cash;
+
+    private List<SaleCartRow> cartRows = [];
+
+    private Customer? SelectedCustomer => customers.FirstOrDefault(c => c.Id == selectedCustomerId);
+    private string SelectedItemUnit => allItems.FirstOrDefault(i => i.Id == selectedItemId)?.Unit?.ShortCode ?? "Unit";
+
+    // Strict stock rule: Only items with CurrentStock > 0 are allowed in the dropdown
+    private IEnumerable<Item> AvailableItemsForSale => allItems.Where(i => i.CurrentStock > 0);
+
+    private decimal PerItemSubTotal => cartRows.Sum(r => r.LineTotal);
+    private decimal ReferenceMrpSum => cartRows.Sum(r => Math.Round(r.Quantity * r.ReferenceMrp, 2));
+    private decimal TotalCartCost => cartRows.Sum(r => Math.Round(r.Quantity * r.AvgCostPrice, 2));
+
+    private decimal EffectiveNetTotal => billingMode == BillingMode.PerItem
+        ? Math.Max(0, PerItemSubTotal - discountAmount)
+        : lumpSumTotalAmount;
+
+    private decimal CreditDue => Math.Max(0, EffectiveNetTotal - receivedAmount);
+
+    protected override async Task OnInitializedAsync()
+    {
+        customers = await CustomerService.GetCustomersAsync();
+        allItems = await ItemService.GetItemsAsync();
+        var walkIn = customers.FirstOrDefault(c => c.IsWalkIn);
+        if (walkIn != null) selectedCustomerId = walkIn.Id;
+    }
+
+    private void OnCustomerChanged(int custId)
+    {
+        selectedCustomerId = custId;
+    }
+
+    private void OnBillingModeChanged(BillingMode mode)
+    {
+        billingMode = mode;
+        if (billingMode == BillingMode.LumpSum && lumpSumTotalAmount == 0)
+        {
+            lumpSumTotalAmount = ReferenceMrpSum;
+        }
+        receivedAmount = EffectiveNetTotal;
+    }
+
+    private void OnItemSelected(int itemId)
+    {
+        selectedItemId = itemId;
+        var item = allItems.FirstOrDefault(i => i.Id == itemId);
+        if (item != null)
+        {
+            entrySellingPrice = item.SellingPrice;
+        }
+    }
+
+    private async Task SaveQuickCustomer()
+    {
+        if (string.IsNullOrWhiteSpace(newCustName))
+        {
+            Snackbar.Add("Customer Name is required.", Severity.Warning);
+            return;
+        }
+        var created = await CustomerService.CreateCustomerAsync(newCustName, newCustPhone, newCustAddress);
+        customers = await CustomerService.GetCustomersAsync();
+        selectedCustomerId = created.Id;
+        newCustName = ""; newCustPhone = ""; newCustAddress = "";
+        showNewCustomerBox = false;
+        Snackbar.Add($"Customer '{created.Name}' added and selected!", Severity.Success);
+    }
+
+    private void AddItemToSale()
+    {
+        var item = allItems.FirstOrDefault(i => i.Id == selectedItemId);
+        if (item == null)
+        {
+            Snackbar.Add("Please select an in-stock item.", Severity.Warning);
+            return;
+        }
+        if (entryQty <= 0)
+        {
+            Snackbar.Add("Quantity must be greater than 0.", Severity.Warning);
+            return;
+        }
+        if (!item.Unit.AllowDecimals && entryQty % 1 != 0)
+        {
+            Snackbar.Add($"'{item.Name}' is sold in {item.Unit.ShortCode} and does not allow decimal quantities.", Severity.Error);
+            return;
+        }
+
+        // Check total quantity in cart + new quantity against CurrentStock
+        decimal alreadyInCart = cartRows.Where(r => r.ItemId == item.Id).Sum(r => r.Quantity);
+        if (alreadyInCart + entryQty > item.CurrentStock)
+        {
+            Snackbar.Add($"Insufficient Stock! Available '{item.Name}' is {item.CurrentStock:0.###} {item.Unit.ShortCode} (Already in bill: {alreadyInCart:0.###}).", Severity.Error);
+            return;
+        }
+
+        cartRows.Add(new SaleCartRow
+        {
+            ItemId = item.Id,
+            ItemName = item.Name,
+            UnitCode = item.Unit.ShortCode,
+            Quantity = entryQty,
+            AvgCostPrice = item.AvgCostPrice,
+            ReferenceMrp = item.SellingPrice,
+            SellingUnitPrice = entrySellingPrice
+        });
+
+        selectedItemId = 0;
+        entryQty = 1;
+        entrySellingPrice = 0;
+
+        if (billingMode == BillingMode.LumpSum)
+            lumpSumTotalAmount = ReferenceMrpSum;
+
+        receivedAmount = EffectiveNetTotal;
+    }
+
+    private void RemoveRow(SaleCartRow row)
+    {
+        cartRows.Remove(row);
+        if (billingMode == BillingMode.LumpSum)
+            lumpSumTotalAmount = ReferenceMrpSum;
+        receivedAmount = EffectiveNetTotal;
+    }
+
+    private void OnDiscountChanged(decimal val)
+    {
+        discountAmount = val;
+        receivedAmount = EffectiveNetTotal;
+    }
+
+    private void OnLumpSumTotalChanged(decimal val)
+    {
+        lumpSumTotalAmount = val;
+        receivedAmount = EffectiveNetTotal;
+    }
+
+    private async Task CompleteSaleAsync()
+    {
+        if (!cartRows.Any())
+        {
+            Snackbar.Add("Please add at least one item to the sale.", Severity.Error);
+            return;
+        }
+        if (saleDate == null)
+        {
+            Snackbar.Add("Please select a valid Sale Date.", Severity.Error);
+            return;
+        }
+        if (EffectiveNetTotal <= 0)
+        {
+            Snackbar.Add("Total Invoice Amount must be greater than 0.", Severity.Error);
+            return;
+        }
+        if (SelectedCustomer is { IsWalkIn: true } && CreditDue > 0)
+        {
+            Snackbar.Add("Walk-in Customers cannot buy on Credit (Udhaar)! Please select or create a Named Customer.", Severity.Error);
+            return;
+        }
+
+        try
+        {
+            var sale = new SalesInvoice
+            {
+                CustomerId = selectedCustomerId,
+                InvoiceDate = saleDate.Value,
+                BillingMode = billingMode,
+                DiscountAmount = billingMode == BillingMode.PerItem ? discountAmount : 0,
+                NetTotalAmount = EffectiveNetTotal,
+                ReceivedAmount = receivedAmount,
+                Items = cartRows.Select(r => new SalesInvoiceItem
+                {
+                    ItemId = r.ItemId,
+                    Quantity = r.Quantity,
+                    SellingUnitPrice = billingMode == BillingMode.PerItem ? r.SellingUnitPrice : null
+                }).ToList()
+            };
+
+            await SalesService.SaveSalesInvoiceAsync(sale, paymentMode);
+            Snackbar.Add("Sale completed! Inventory & Customer Ledger updated.", Severity.Success);
+            Nav.NavigateTo("/sales");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private class SaleCartRow
+    {
+        public int ItemId { get; set; }
+        public string ItemName { get; set; } = "";
+        public string UnitCode { get; set; } = "";
+        public decimal Quantity { get; set; }
+        public decimal AvgCostPrice { get; set; }
+        public decimal ReferenceMrp { get; set; }
+        public decimal SellingUnitPrice { get; set; }
+        public decimal LineTotal => Math.Round(Quantity * SellingUnitPrice, 2);
+    }
+}

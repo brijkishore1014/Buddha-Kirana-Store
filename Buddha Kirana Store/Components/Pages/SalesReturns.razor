@@ -1,0 +1,403 @@
+﻿@page "/sales-returns"
+@inject ICustomerService CustomerService
+@inject IItemService ItemService
+@inject ISalesReturnService SalesReturnService
+@inject ISnackbar Snackbar
+
+<div class="d-flex justify-space-between align-center mb-3">
+    <MudText Typo="Typo.h5" Style="font-weight:600;">Sales Returns (Customer Returns)</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@(showEntryForm ? Icons.Material.Filled.Close : Icons.Material.Filled.AssignmentReturn)" OnClick="@(() => showEntryForm = !showEntryForm)">
+        @(showEntryForm ? "Hide Entry Form" : "+ New Sales Return")
+    </MudButton>
+</div>
+
+<!-- 1. SALES RETURN ENTRY FORM -->
+@if (showEntryForm)
+{
+    <MudPaper Elevation="3" Class="pa-4 mb-4" Style="border-left: 5px solid #00897b;">
+        <MudText Typo="Typo.subtitle1" Color="Color.Info" Class="mb-3" Style="font-weight:700;">
+            Record Customer Item Return (Stock-In & Udhaar/Cash Refund)
+        </MudText>
+
+        <MudGrid>
+            <MudItem xs="12" sm="4">
+                <MudSelect T="int" Label="Select Customer *" Value="selectedCustomerId" ValueChanged="OnCustomerChanged" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    @foreach (var c in customers)
+                    {
+                        <MudSelectItem Value="@c.Id">
+                            @c.Name @(c.IsWalkIn ? "(Walk-In)" : $"— Pending Udhaar: ₹{c.CurrentReceivableBalance:0.00}")
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudDatePicker @bind-Date="returnDate" Label="Return Date *" MaxDate="@DateTime.Today" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" Editable="true" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudTextField @bind-Value="originalInvoiceNo" Label="Orig. Bill No (Optional)" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="remarks" Label="Return Reason / Remarks" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+        </MudGrid>
+
+        <!-- ADD RETURNED ITEM ROW -->
+        <MudGrid Class="mt-2">
+            <MudItem xs="12" sm="5">
+                <MudSelect T="int" Label="Select Returned Item *" Value="selectedItemId" ValueChanged="OnItemSelected" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="0">-- Choose Item --</MudSelectItem>
+                    @foreach (var item in items)
+                    {
+                        <MudSelectItem Value="@item.Id">@item.Name (@item.Unit?.ShortCode) — Std Price: ₹@item.SellingPrice.ToString("0.00")</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudNumericField T="decimal" @bind-Value="entryQty" Label="Qty Returned *" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0.001m" />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudNumericField T="decimal" @bind-Value="entryReturnRate" Label="Return Rate / Unit (₹) *" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" HelperText="Editable for Lump-sum bills" />
+            </MudItem>
+            <MudItem xs="12" sm="2" Class="d-flex align-center">
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" FullWidth="true" OnClick="AddRow">+ Add Item</MudButton>
+            </MudItem>
+        </MudGrid>
+
+        <!-- RETURN ITEMS CART -->
+        <MudSimpleTable Dense="true" Bordered="true" Hover="true" Class="mt-3 mb-3">
+            <thead>
+                <tr style="background-color: #eeeeee;">
+                    <th>Item Name</th>
+                    <th>Qty Returned (Added to Stock)</th>
+                    <th>Return Rate / Unit (₹)</th>
+                    <th>Line Total (₹)</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (!cartRows.Any())
+                {
+                    <tr><td colspan="5" class="text-center pa-2">No returned items added yet.</td></tr>
+                }
+                @foreach (var row in cartRows)
+                {
+                    <tr>
+                        <td><b>@row.ItemName</b></td>
+                        <td>@row.Quantity.ToString("0.###") @row.UnitCode</td>
+                        <td>₹@row.ReturnUnitPrice.ToString("0.00")</td>
+                        <td><b>₹@row.LineTotal.ToString("0.00")</b></td>
+                        <td>
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="@(() => RemoveRow(row))" />
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+
+        <!-- SETTLEMENT FOOTER -->
+        <MudGrid>
+            <MudItem xs="12" sm="3" Class="d-flex align-center">
+                <MudText Typo="Typo.h6">Total Return: <b>₹@TotalReturnAmount.ToString("0.00")</b></MudText>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudNumericField T="decimal" @bind-Value="refundPaidAmount" Label="Cash/UPI Refunded Now (₹)" Disabled="@(SelectedCustomer?.IsWalkIn == true)" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" Max="@TotalReturnAmount" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudSelect T="PaymentMode" @bind-Value="refundMode" Label="Refund Mode" Disabled="@(refundPaidAmount <= 0)" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="PaymentMode.Cash">Cash</MudSelectItem>
+                    <MudSelectItem Value="PaymentMode.UPI">UPI</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="2" Class="d-flex flex-column justify-center">
+                <MudText Typo="Typo.caption">Deducted from Udhaar:</MudText>
+                <MudText Color="Color.Success" Style="font-weight:bold;">₹@UdhaarAdjusted.ToString("0.00")</MudText>
+            </MudItem>
+            <MudItem xs="6" sm="2" Class="d-flex align-center">
+                <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true" OnClick="SaveSalesReturnAsync">
+                    Save Return
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+}
+
+<!-- 2. SEARCH & FILTER BAR -->
+<MudPaper Elevation="2" Class="pa-4 mb-3">
+    <MudGrid>
+        <MudItem xs="12" sm="4">
+            <MudTextField @bind-Value="searchString" Placeholder="Search Return No, Customer, Bill No, or Item..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudSelect T="int" @bind-Value="filterCustomerId" Label="Filter Customer" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">All Customers</MudSelectItem>
+                @foreach (var c in customers)
+                {
+                    <MudSelectItem Value="@c.Id">@c.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker @bind-Date="fromDate" Label="From Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker @bind-Date="toDate" Label="To Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="12" sm="1" Class="d-flex align-center">
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true" OnClick="ResetFilters">Reset</MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<!-- 3. PAGINATED SALES RETURNS HISTORY -->
+<MudTable Items="@FilteredReturns" Dense="true" Hover="true" Bordered="true" Striped="true" Elevation="2">
+    <HeaderContent>
+        <MudTh><MudTableSortLabel SortBy="new Func<SalesReturn, object>(x => x.ReturnNumber)">Return No</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<SalesReturn, object>(x => x.ReturnDate)">Date</MudTableSortLabel></MudTh>
+        <MudTh>Customer</MudTh>
+        <MudTh>Orig. Bill</MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<SalesReturn, object>(x => x.TotalReturnAmount)">Total Return (₹)</MudTableSortLabel></MudTh>
+        <MudTh>Cash/UPI Refund (₹)</MudTh>
+        <MudTh>Adjusted in Udhaar (₹)</MudTh>
+        <MudTh>Details</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Return No"><b>@context.ReturnNumber</b></MudTd>
+        <MudTd DataLabel="Date">@context.ReturnDate.ToString("dd-MMM-yyyy")</MudTd>
+        <MudTd DataLabel="Customer">@context.Customer?.Name</MudTd>
+        <MudTd DataLabel="Orig. Bill">@(string.IsNullOrWhiteSpace(context.OriginalInvoiceNo) ? "—" : context.OriginalInvoiceNo)</MudTd>
+        <MudTd DataLabel="Total Return"><b>₹@context.TotalReturnAmount.ToString("0.00")</b></MudTd>
+        <MudTd DataLabel="Cash/UPI Refund">₹@context.RefundPaidAmount.ToString("0.00") (@context.RefundMode)</MudTd>
+        <MudTd DataLabel="Adjusted in Udhaar">
+            <MudText Color="Color.Success" Style="font-weight:bold;">₹@context.UdhaarAdjustedAmount.ToString("0.00")</MudText>
+        </MudTd>
+        <MudTd DataLabel="Details">
+            <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small" OnClick="@(() => ToggleExpand(context.Id))">
+                @(expandedIds.Contains(context.Id) ? "Hide Items" : $"Items ({context.Items.Count})")
+            </MudButton>
+        </MudTd>
+    </RowTemplate>
+    <ChildRowContent>
+        @if (expandedIds.Contains(context.Id))
+        {
+            <MudTr>
+                <td colspan="8" style="background-color: #f8f9fa; padding: 12px 24px;">
+                    <MudText Typo="Typo.subtitle2" Color="Color.Primary" Class="mb-2">
+                        <b>Returned Items in @context.ReturnNumber @(string.IsNullOrWhiteSpace(context.Remarks) ? "" : $"— Note: {context.Remarks}")</b>
+                    </MudText>
+                    <MudSimpleTable Dense="true" Bordered="true" Style="background-color: white;">
+                        <thead>
+                            <tr style="background-color: #eceff1;">
+                                <th>Item Name</th>
+                                <th>Returned Qty</th>
+                                <th>Return Rate (₹)</th>
+                                <th>Line Total (₹)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var line in context.Items)
+                            {
+                                <tr>
+                                    <td>@line.Item?.Name</td>
+                                    <td>@line.Quantity.ToString("0.###") @line.Item?.Unit?.ShortCode</td>
+                                    <td>₹@line.ReturnUnitPrice.ToString("0.00")</td>
+                                    <td><b>₹@line.LineTotal.ToString("0.00")</b></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                </td>
+            </MudTr>
+        }
+    </ChildRowContent>
+    <NoRecordsContent>
+        <MudText Class="pa-4">No sales returns recorded yet.</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new int[] { 10, 25, 50 }" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private List<Customer> customers = [];
+    private List<Item> items = [];
+    private List<SalesReturn> salesReturns = [];
+    private HashSet<int> expandedIds = [];
+
+    private bool showEntryForm = true;
+    private int selectedCustomerId = 1;
+    private DateTime? returnDate = DateTime.Today;
+    private string? originalInvoiceNo;
+    private string? remarks;
+
+    private int selectedItemId = 0;
+    private decimal entryQty = 1;
+    private decimal entryReturnRate = 0;
+
+    private decimal refundPaidAmount = 0;
+    private PaymentMode refundMode = PaymentMode.Cash;
+    private List<ReturnRow> cartRows = [];
+
+    // Filter State
+    private string searchString = "";
+    private int filterCustomerId = 0;
+    private DateTime? fromDate;
+    private DateTime? toDate;
+
+    private Customer? SelectedCustomer => customers.FirstOrDefault(c => c.Id == selectedCustomerId);
+    private decimal TotalReturnAmount => cartRows.Sum(r => r.LineTotal);
+    private decimal UdhaarAdjusted => Math.Max(0, TotalReturnAmount - refundPaidAmount);
+
+    private IEnumerable<SalesReturn> FilteredReturns => salesReturns.Where(r =>
+        (filterCustomerId == 0 || r.CustomerId == filterCustomerId) &&
+        (!fromDate.HasValue || r.ReturnDate.Date >= fromDate.Value.Date) &&
+        (!toDate.HasValue || r.ReturnDate.Date <= toDate.Value.Date) &&
+        (string.IsNullOrWhiteSpace(searchString) ||
+         r.ReturnNumber.Contains(searchString, StringComparison.OrdinalIgnoreCase) ||
+         (r.OriginalInvoiceNo != null && r.OriginalInvoiceNo.Contains(searchString, StringComparison.OrdinalIgnoreCase)) ||
+         (r.Customer != null && r.Customer.Name.Contains(searchString, StringComparison.OrdinalIgnoreCase)) ||
+         r.Items.Any(i => i.Item != null && i.Item.Name.Contains(searchString, StringComparison.OrdinalIgnoreCase)))
+    );
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+        var walkIn = customers.FirstOrDefault(c => c.IsWalkIn);
+        if (walkIn != null) selectedCustomerId = walkIn.Id;
+    }
+
+    private async Task LoadDataAsync()
+    {
+        customers = await CustomerService.GetCustomersAsync();
+        items = await ItemService.GetItemsAsync();
+        salesReturns = await SalesReturnService.GetSalesReturnsAsync();
+    }
+
+    private void OnCustomerChanged(int custId)
+    {
+        selectedCustomerId = custId;
+        RecalculateDefaultRefund();
+    }
+
+    private void OnItemSelected(int itemId)
+    {
+        selectedItemId = itemId;
+        var item = items.FirstOrDefault(i => i.Id == itemId);
+        if (item != null) entryReturnRate = item.SellingPrice;
+    }
+
+    private void AddRow()
+    {
+        var item = items.FirstOrDefault(i => i.Id == selectedItemId);
+        if (item == null || entryQty <= 0 || entryReturnRate < 0)
+        {
+            Snackbar.Add("Please select an item and enter valid Quantity and Return Rate.", Severity.Warning);
+            return;
+        }
+        if (!item.Unit.AllowDecimals && entryQty % 1 != 0)
+        {
+            Snackbar.Add($"'{item.Name}' does not allow decimal quantities.", Severity.Error);
+            return;
+        }
+
+        cartRows.Add(new ReturnRow
+        {
+            ItemId = item.Id,
+            ItemName = item.Name,
+            UnitCode = item.Unit.ShortCode,
+            Quantity = entryQty,
+            ReturnUnitPrice = entryReturnRate
+        });
+
+        selectedItemId = 0;
+        entryQty = 1;
+        entryReturnRate = 0;
+        RecalculateDefaultRefund();
+    }
+
+    private void RemoveRow(ReturnRow row)
+    {
+        cartRows.Remove(row);
+        RecalculateDefaultRefund();
+    }
+
+    private void RecalculateDefaultRefund()
+    {
+        if (SelectedCustomer is { IsWalkIn: true })
+        {
+            refundPaidAmount = TotalReturnAmount;
+        }
+        else if (SelectedCustomer is { CurrentReceivableBalance: > 0 })
+        {
+            // Default to adjusting against existing Udhaar first
+            refundPaidAmount = 0;
+        }
+        else
+        {
+            refundPaidAmount = TotalReturnAmount;
+        }
+    }
+
+    private async Task SaveSalesReturnAsync()
+    {
+        if (!cartRows.Any() || returnDate == null)
+        {
+            Snackbar.Add("Please add at least one returned item and a valid date.", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            var ret = new SalesReturn
+            {
+                CustomerId = selectedCustomerId,
+                ReturnDate = returnDate.Value,
+                OriginalInvoiceNo = originalInvoiceNo,
+                Remarks = remarks,
+                RefundPaidAmount = refundPaidAmount,
+                RefundMode = refundMode,
+                Items = cartRows.Select(r => new SalesReturnItem
+                {
+                    ItemId = r.ItemId,
+                    Quantity = r.Quantity,
+                    ReturnUnitPrice = r.ReturnUnitPrice,
+                    LineTotal = r.LineTotal
+                }).ToList()
+            };
+
+            await SalesReturnService.SaveSalesReturnAsync(ret);
+            cartRows.Clear();
+            originalInvoiceNo = "";
+            remarks = "";
+            refundPaidAmount = 0;
+            await LoadDataAsync();
+            Snackbar.Add("Sales Return saved! Stock incremented and Customer balance updated.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private void ToggleExpand(int id)
+    {
+        if (!expandedIds.Add(id)) expandedIds.Remove(id);
+    }
+
+    private void ResetFilters()
+    {
+        searchString = "";
+        filterCustomerId = 0;
+        fromDate = null;
+        toDate = null;
+    }
+
+    private class ReturnRow
+    {
+        public int ItemId { get; set; }
+        public string ItemName { get; set; } = "";
+        public string UnitCode { get; set; } = "";
+        public decimal Quantity { get; set; }
+        public decimal ReturnUnitPrice { get; set; }
+        public decimal LineTotal => Math.Round(Quantity * ReturnUnitPrice, 2);
+    }
+}

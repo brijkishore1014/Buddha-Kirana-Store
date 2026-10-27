@@ -1,0 +1,266 @@
+﻿@page "/suppliers"
+@inject IPartyPaymentService PartyPaymentService
+@inject ISupplierService SupplierService
+@inject ISnackbar Snackbar
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.h5" Style="font-weight:600;">Supplier Payable Ledger (Accounts Payable)</MudText>
+    <div class="d-flex gap-2 align-center">
+        <MudChip T="string" Color="Color.Error" Variant="Variant.Filled" Size="Size.Medium">
+            Total Payable to Suppliers: ₹@suppliers.Sum(s => s.CurrentPayableBalance).ToString("0.00")
+        </MudChip>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="@(() => showNewSupplierBox = !showNewSupplierBox)">
+            + Add Supplier
+        </MudButton>
+    </div>
+</div>
+
+<!-- INLINE NEW SUPPLIER BOX -->
+@if (showNewSupplierBox)
+{
+    <MudPaper Elevation="2" Class="pa-4 mb-4" Style="background-color: #e3f2fd;">
+        <MudText Typo="Typo.subtitle2" Class="mb-2"><b>Add New Supplier</b></MudText>
+        <MudGrid>
+            <MudItem xs="12" sm="4">
+                <MudTextField @bind-Value="newSupName" Label="Supplier Name *" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="newSupPhone" Label="Phone Number" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="newSupAddress" Label="Address" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="2" Class="d-flex align-center gap-1">
+                <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" OnClick="CreateSupplierAsync">Save</MudButton>
+                <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="@(() => showNewSupplierBox = false)">Cancel</MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+}
+
+<!-- 1. RECORD PAYOUT TO SUPPLIER PANEL -->
+<MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-left: 5px solid #1976d2;">
+    <MudText Typo="Typo.subtitle1" Class="mb-3" Style="font-weight:600;">💸 Record Payout to Supplier</MudText>
+    <MudGrid>
+        <MudItem xs="12" sm="3">
+            <MudSelect T="int" Value="selectedSupplierId" ValueChanged="OnSupplierSelected" Label="Select Supplier *" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">-- Select Supplier --</MudSelectItem>
+                @foreach (var s in suppliers)
+                {
+                    <MudSelectItem Value="@s.Id">@s.Name (Due: ₹@s.CurrentPayableBalance.ToString("0.00"))</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudNumericField T="decimal" @bind-Value="payAmount" Label="Amount Paid (₹) *" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudSelect T="PaymentMode" @bind-Value="payMode" Label="Payment Mode" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="PaymentMode.Cash">Cash</MudSelectItem>
+                <MudSelectItem Value="PaymentMode.UPI">UPI</MudSelectItem>
+                <MudSelectItem Value="PaymentMode.BankTransfer">Bank Transfer</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker @bind-Date="payDate" Label="Payment Date *" MaxDate="@DateTime.Today" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" Editable="true" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudTextField @bind-Value="payRemarks" Label="Reference / Note" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="12" sm="1" Class="d-flex align-center">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" OnClick="SavePayoutAsync">
+                Pay
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<!-- 2. TABS: SUPPLIER BALANCES & PAYMENT HISTORY -->
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+    <!-- TAB 1: SUPPLIER BALANCES -->
+    <MudTabPanel Text="Supplier Balances" Icon="@Icons.Material.Filled.AccountBalanceWallet">
+        <MudGrid Class="mb-3">
+            <MudItem xs="12" sm="6">
+                <MudTextField @bind-Value="supSearch" Placeholder="Search Supplier by Name or Phone..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudSelect T="string" @bind-Value="balanceFilter" Label="Balance Filter" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="@("ALL")">All Suppliers</MudSelectItem>
+                    <MudSelectItem Value="@("DUE")">Has Payable Due (> ₹0)</MudSelectItem>
+                    <MudSelectItem Value="@("SETTLED")">Settled (₹0)</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+
+        <MudTable Items="@FilteredSuppliers" Dense="true" Hover="true" Bordered="true" Striped="true">
+            <HeaderContent>
+                <MudTh><MudTableSortLabel SortBy="new Func<Supplier, object>(x => x.Name)">Supplier Name</MudTableSortLabel></MudTh>
+                <MudTh>Phone</MudTh>
+                <MudTh>Address</MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<Supplier, object>(x => x.CurrentPayableBalance)">Payable Balance (₹)</MudTableSortLabel></MudTh>
+                <MudTh>Quick Action</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Supplier Name"><b>@context.Name</b></MudTd>
+                <MudTd DataLabel="Phone">@(context.Phone ?? "—")</MudTd>
+                <MudTd DataLabel="Address">@(context.Address ?? "—")</MudTd>
+                <MudTd DataLabel="Payable Balance">
+                    <MudText Color="@(context.CurrentPayableBalance > 0 ? Color.Error : Color.Success)" Style="font-weight:bold;">
+                        ₹@context.CurrentPayableBalance.ToString("0.00")
+                    </MudText>
+                </MudTd>
+                <MudTd DataLabel="Quick Action">
+                    @if (context.CurrentPayableBalance > 0)
+                    {
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="@(() => OnSupplierSelected(context.Id))">
+                            Select to Pay
+                        </MudButton>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Success" Size="Size.Small">Settled</MudChip>
+                    }
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Class="pa-4">No suppliers match your criteria.</MudText>
+            </NoRecordsContent>
+            <PagerContent>
+                <MudTablePager PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudTable>
+    </MudTabPanel>
+
+    <!-- TAB 2: PAYOUT TRANSACTIONS HISTORY -->
+    <MudTabPanel Text="Payout History" Icon="@Icons.Material.Filled.History">
+        <MudGrid Class="mb-3">
+            <MudItem xs="12" sm="4">
+                <MudTextField @bind-Value="txSearch" Placeholder="Search Supplier or Remarks..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudDatePicker @bind-Date="txFromDate" Label="From Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudDatePicker @bind-Date="txToDate" Label="To Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+        </MudGrid>
+
+        <MudTable Items="@FilteredPayments" Dense="true" Hover="true" Bordered="true" Striped="true">
+            <HeaderContent>
+                <MudTh><MudTableSortLabel SortBy="new Func<PaymentTransaction, object>(x => x.TransactionDate)">Date</MudTableSortLabel></MudTh>
+                <MudTh>Supplier Name</MudTh>
+                <MudTh>Payment Mode</MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<PaymentTransaction, object>(x => x.Amount)">Amount Paid (₹)</MudTableSortLabel></MudTh>
+                <MudTh>Remarks / Reference</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Date">@context.TransactionDate.ToString("dd-MMM-yyyy")</MudTd>
+                <MudTd DataLabel="Supplier Name"><b>@GetSupplierName(context.PartyId)</b></MudTd>
+                <MudTd DataLabel="Payment Mode"><MudChip T="string" Size="Size.Small">@context.PaymentMode</MudChip></MudTd>
+                <MudTd DataLabel="Amount Paid"><MudText Color="Color.Success" Style="font-weight:bold;">₹@context.Amount.ToString("0.00")</MudText></MudTd>
+                <MudTd DataLabel="Remarks">@context.Remarks</MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Class="pa-4">No supplier payouts recorded yet.</MudText>
+            </NoRecordsContent>
+            <PagerContent>
+                <MudTablePager PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudTable>
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    private List<Supplier> suppliers = [];
+    private List<PaymentTransaction> payouts = [];
+
+    // New Supplier State
+    private bool showNewSupplierBox = false;
+    private string newSupName = "";
+    private string? newSupPhone;
+    private string? newSupAddress;
+
+    // Payout Entry State
+    private int selectedSupplierId = 0;
+    private decimal payAmount = 0;
+    private PaymentMode payMode = PaymentMode.Cash;
+    private DateTime? payDate = DateTime.Today;
+    private string? payRemarks;
+
+    // Filter State
+    private string supSearch = "";
+    private string balanceFilter = "ALL";
+    private string txSearch = "";
+    private DateTime? txFromDate;
+    private DateTime? txToDate;
+
+    private IEnumerable<Supplier> FilteredSuppliers => suppliers.Where(s =>
+        (balanceFilter == "ALL" ||
+         (balanceFilter == "DUE" && s.CurrentPayableBalance > 0) ||
+         (balanceFilter == "SETTLED" && s.CurrentPayableBalance <= 0)) &&
+        (string.IsNullOrWhiteSpace(supSearch) ||
+         s.Name.Contains(supSearch, StringComparison.OrdinalIgnoreCase) ||
+         (s.Phone != null && s.Phone.Contains(supSearch, StringComparison.OrdinalIgnoreCase)))
+    );
+
+    private IEnumerable<PaymentTransaction> FilteredPayments => payouts.Where(p =>
+        (!txFromDate.HasValue || p.TransactionDate.Date >= txFromDate.Value.Date) &&
+        (!txToDate.HasValue || p.TransactionDate.Date <= txToDate.Value.Date) &&
+        (string.IsNullOrWhiteSpace(txSearch) ||
+         GetSupplierName(p.PartyId).Contains(txSearch, StringComparison.OrdinalIgnoreCase) ||
+         (p.Remarks != null && p.Remarks.Contains(txSearch, StringComparison.OrdinalIgnoreCase)))
+    );
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        suppliers = await SupplierService.GetSuppliersAsync();
+        payouts = await PartyPaymentService.GetPaymentTransactionsAsync(PartyType.Supplier);
+    }
+
+    private string GetSupplierName(int id) => suppliers.FirstOrDefault(s => s.Id == id)?.Name ?? $"Supplier #{id}";
+
+    private void OnSupplierSelected(int supplierId)
+    {
+        selectedSupplierId = supplierId;
+        var sup = suppliers.FirstOrDefault(s => s.Id == supplierId);
+        if (sup != null && sup.CurrentPayableBalance > 0)
+        {
+            payAmount = sup.CurrentPayableBalance;
+        }
+    }
+
+    private async Task CreateSupplierAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newSupName))
+        {
+            Snackbar.Add("Supplier Name is required.", Severity.Warning);
+            return;
+        }
+        await SupplierService.CreateSupplierAsync(newSupName, newSupPhone, newSupAddress);
+        newSupName = ""; newSupPhone = ""; newSupAddress = "";
+        showNewSupplierBox = false;
+        await LoadDataAsync();
+        Snackbar.Add("Supplier added!", Severity.Success);
+    }
+
+    private async Task SavePayoutAsync()
+    {
+        if (selectedSupplierId == 0 || payAmount <= 0 || payDate == null)
+        {
+            Snackbar.Add("Please select a Supplier and enter a valid Payment Amount and Date.", Severity.Warning);
+            return;
+        }
+
+        await PartyPaymentService.RecordPartyPaymentAsync(PartyType.Supplier, selectedSupplierId, payAmount, payMode, payDate.Value, payRemarks);
+        payAmount = 0;
+        payRemarks = "";
+        selectedSupplierId = 0;
+        await LoadDataAsync();
+        Snackbar.Add("Supplier payout recorded and balance updated!", Severity.Success);
+    }
+}

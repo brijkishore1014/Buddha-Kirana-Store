@@ -1,0 +1,280 @@
+﻿@page "/"
+@inject IItemService ItemService
+@inject IUnitOfMeasureService UnitService
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.h5" Style="font-weight:600;">Inventory & Stock Status</MudText>
+    <div class="d-flex gap-2">
+        <MudButton Variant="Variant.Filled" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.AddBox" OnClick="OpenAddItemPanel">
+            + Add New Item (Opening Stock)
+        </MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.AddShoppingCart" OnClick="@(() => Nav.NavigateTo("/purchase"))">
+            + New Purchase (Stock In)
+        </MudButton>
+    </div>
+</div>
+
+<!-- ADD / EDIT ITEM MASTER & OPENING STOCK PANEL -->
+@if (showItemForm)
+{
+    <MudPaper Elevation="3" Class="pa-4 mb-4" Style="border-left: 5px solid #9c27b0; background-color: #faf5ff;">
+        <div class="d-flex justify-space-between align-center mb-3">
+            <MudText Typo="Typo.subtitle1" Color="Color.Secondary" Style="font-weight:700;">
+                @(editingItemId == 0 ? "Add New Item to Shop (With Optional Opening Stock)" : $"Edit Item: {formName}")
+            </MudText>
+            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="@(() => showItemForm = false)" />
+        </div>
+
+        <MudGrid>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="formName" Label="Item Name (e.g. Basmati Rice) *" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudTextField @bind-Value="formShortCode" Label="Short Code (e.g. brice)" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudSelect T="int" @bind-Value="formUnitId" Label="Base Unit *" Disabled="@(editingItemId != 0)" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    @foreach (var u in units)
+                    {
+                        <MudSelectItem Value="@u.Id">@u.Name (@u.ShortCode)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudNumericField T="decimal" @bind-Value="formSellingPrice" Label="Selling Price / Unit (₹) *" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudNumericField T="decimal" @bind-Value="formMinThreshold" Label="Min Stock Alert" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" />
+            </MudItem>
+
+            @if (editingItemId == 0)
+            {
+                <MudItem xs="6" sm="3">
+                    <MudNumericField T="decimal" @bind-Value="formOpeningStock" Label="Opening Stock (Already in Shop)" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" HelperText="Leave 0 if no stock yet" />
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <MudNumericField T="decimal" @bind-Value="formOpeningCost" Label="Opening Cost / Unit (₹)" Disabled="@(formOpeningStock <= 0)" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" HelperText="Purchase cost of existing stock" />
+                </MudItem>
+            }
+
+            <MudItem xs="12" sm="4" Class="d-flex align-center gap-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" OnClick="SaveItemForm">
+                    @(editingItemId == 0 ? "Save Item" : "Update Item")
+                </MudButton>
+                @if (editingItemId == 0)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="SaveAndAddAnother">
+                        Save & Add Another
+                    </MudButton>
+                }
+                <MudButton Variant="Variant.Text" OnClick="@(() => showItemForm = false)">Cancel</MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+}
+
+@if (items.Any(i => i.CurrentStock <= i.MinStockThreshold))
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="mb-4" Dense="true">
+        ⚠️ <b>Low Stock Alert:</b> @items.Count(i => i.CurrentStock <= i.MinStockThreshold) item(s) are at or below their minimum stock threshold!
+    </MudAlert>
+}
+
+<!-- SEARCH & FILTER BAR -->
+<MudPaper Elevation="2" Class="pa-4 mb-3">
+    <MudGrid>
+        <MudItem xs="12" sm="6">
+            <MudTextField @bind-Value="searchTerm" Placeholder="Search item by Name or Short Code..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudSelect T="string" @bind-Value="stockFilter" Label="Stock Status Filter" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="@("ALL")">All Items</MudSelectItem>
+                <MudSelectItem Value="@("IN")">In Stock</MudSelectItem>
+                <MudSelectItem Value="@("LOW")">Low Stock Alert</MudSelectItem>
+                <MudSelectItem Value="@("OUT")">Out of Stock (0)</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudSelect T="int" @bind-Value="unitFilter" Label="Filter by Unit" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">All Units</MudSelectItem>
+                @foreach (var u in units)
+                {
+                    <MudSelectItem Value="@u.Id">@u.Name (@u.ShortCode)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<!-- PAGINATED INVENTORY TABLE -->
+<MudTable Items="@FilteredItems" Dense="true" Hover="true" Bordered="true" Striped="true" Elevation="2">
+    <HeaderContent>
+        <MudTh><MudTableSortLabel SortBy="new Func<Item, object>(x => x.Name)">Item Name</MudTableSortLabel></MudTh>
+        <MudTh>Short Code</MudTh>
+        <MudTh>Unit</MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<Item, object>(x => x.CurrentStock)">Current Stock</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<Item, object>(x => x.AvgCostPrice)">Avg Cost (₹)</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<Item, object>(x => x.SellingPrice)">Selling Price (₹)</MudTableSortLabel></MudTh>
+        <MudTh>Min Alert</MudTh>
+        <MudTh>Status</MudTh>
+        <MudTh>Action</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Item Name"><b>@context.Name</b></MudTd>
+        <MudTd DataLabel="Short Code">@context.ShortCode</MudTd>
+        <MudTd DataLabel="Unit">@context.Unit?.ShortCode</MudTd>
+        <MudTd DataLabel="Current Stock">
+            <MudText Color="@(context.CurrentStock <= context.MinStockThreshold ? Color.Error : Color.Success)" Style="font-weight:bold;">
+                @(context.Unit?.AllowDecimals == true ? context.CurrentStock.ToString("0.###") : context.CurrentStock.ToString("0"))
+            </MudText>
+        </MudTd>
+        <MudTd DataLabel="Avg Cost">₹@context.AvgCostPrice.ToString("0.00")</MudTd>
+        <MudTd DataLabel="Selling Price"><b>₹@context.SellingPrice.ToString("0.00")</b></MudTd>
+        <MudTd DataLabel="Min Alert">@(context.Unit?.AllowDecimals == true ? context.MinStockThreshold.ToString("0.###") : context.MinStockThreshold.ToString("0"))</MudTd>
+        <MudTd DataLabel="Status">
+            @if (context.CurrentStock <= 0)
+            {
+                <MudChip T="string" Color="Color.Error" Size="Size.Small">Out of Stock (Sale Blocked)</MudChip>
+            }
+            else if (context.CurrentStock <= context.MinStockThreshold)
+            {
+                <MudChip T="string" Color="Color.Warning" Size="Size.Small">Low Stock</MudChip>
+            }
+            else
+            {
+                <MudChip T="string" Color="Color.Success" Size="Size.Small">In Stock</MudChip>
+            }
+        </MudTd>
+        <MudTd DataLabel="Action">
+            <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small" OnClick="@(() => OpenEditItemPanel(context))" Title="Edit Item Details" />
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Class="pa-4">No items match your search/filter criteria.</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new int[] { 10, 25, 50, 100 }" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private List<Item> items = [];
+    private List<UnitOfMeasure> units = [];
+
+    // Filter & Search States
+    private string searchTerm = "";
+    private string stockFilter = "ALL";
+    private int unitFilter = 0;
+
+    // Form State
+    private bool showItemForm = false;
+    private int editingItemId = 0;
+    private string formName = "";
+    private string? formShortCode;
+    private int formUnitId = 1;
+    private decimal formSellingPrice = 0;
+    private decimal formMinThreshold = 5;
+    private decimal formOpeningStock = 0;
+    private decimal formOpeningCost = 0;
+
+    private IEnumerable<Item> FilteredItems => items.Where(i =>
+        (unitFilter == 0 || i.UnitId == unitFilter) &&
+        (stockFilter == "ALL" ||
+         (stockFilter == "OUT" && i.CurrentStock <= 0) ||
+         (stockFilter == "LOW" && i.CurrentStock > 0 && i.CurrentStock <= i.MinStockThreshold) ||
+         (stockFilter == "IN" && i.CurrentStock > i.MinStockThreshold)) &&
+        (string.IsNullOrWhiteSpace(searchTerm) ||
+         i.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+         (i.ShortCode != null && i.ShortCode.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)))
+    );
+
+    protected override async Task OnInitializedAsync()
+    {
+        units = await UnitService.GetUnitsAsync();
+        items = await ItemService.GetItemsAsync();
+    }
+
+    private void OpenAddItemPanel()
+    {
+        editingItemId = 0;
+        ResetFormFields();
+        showItemForm = true;
+    }
+
+    private void OpenEditItemPanel(Item item)
+    {
+        editingItemId = item.Id;
+        formName = item.Name;
+        formShortCode = item.ShortCode;
+        formUnitId = item.UnitId;
+        formSellingPrice = item.SellingPrice;
+        formMinThreshold = item.MinStockThreshold;
+        showItemForm = true;
+    }
+
+    private void ResetFormFields()
+    {
+        formName = "";
+        formShortCode = "";
+        formUnitId = units.FirstOrDefault()?.Id ?? 1;
+        formSellingPrice = 0;
+        formMinThreshold = 5;
+        formOpeningStock = 0;
+        formOpeningCost = 0;
+    }
+
+    private async Task<bool> SaveCoreAsync()
+    {
+        if (string.IsNullOrWhiteSpace(formName) || formSellingPrice <= 0)
+        {
+            Snackbar.Add("Item Name and a valid Selling Price are required.", Severity.Warning);
+            return false;
+        }
+
+        var selectedUnit = units.First(u => u.Id == formUnitId);
+
+        if (editingItemId == 0)
+        {
+            if (!selectedUnit.AllowDecimals && formOpeningStock % 1 != 0)
+            {
+                Snackbar.Add($"Unit '{selectedUnit.ShortCode}' does not allow decimal Opening Stock.", Severity.Error);
+                return false;
+            }
+            if (formOpeningStock > 0 && formOpeningCost <= 0)
+            {
+                Snackbar.Add("Please enter Opening Cost / Unit for the existing stock so profit can be calculated.", Severity.Warning);
+                return false;
+            }
+
+            await ItemService.CreateItemWithOpeningStockAsync(
+                formName, formShortCode, formUnitId, formOpeningStock, formOpeningCost, formSellingPrice, formMinThreshold);
+            Snackbar.Add($"'{formName}' added to inventory!", Severity.Success);
+        }
+        else
+        {
+            await ItemService.UpdateItemMasterAsync(editingItemId, formName, formShortCode, formSellingPrice, formMinThreshold);
+            Snackbar.Add($"'{formName}' updated!", Severity.Success);
+        }
+
+        items = await ItemService.GetItemsAsync();
+        return true;
+    }
+
+    private async Task SaveItemForm()
+    {
+        if (await SaveCoreAsync())
+        {
+            showItemForm = false;
+        }
+    }
+
+    private async Task SaveAndAddAnother()
+    {
+        if (await SaveCoreAsync())
+        {
+            ResetFormFields();
+        }
+    }
+}

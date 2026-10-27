@@ -1,0 +1,43 @@
+﻿@inherits LayoutComponentBase
+
+<MudThemeProvider />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Dense="true" Color="Color.Primary">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="@ToggleDrawer" />
+        <MudText Typo="Typo.h6" Class="ml-2">Buddha Kirana Store</MudText>
+        <MudSpacer />
+        <MudText Typo="Typo.body2">@DateTime.Now.ToString("dd MMM yyyy")</MudText>
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen" Elevation="2" ClipMode="DrawerClipMode.Always">
+        <MudNavMenu Class="mt-2">
+            <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Inventory">Inventory & Stock</MudNavLink>
+            <MudNavLink Href="/purchase" Icon="@Icons.Material.Filled.AddShoppingCart">Purchase Entry (Stock In)</MudNavLink>
+            <MudNavLink Href="/purchases" Icon="@Icons.Material.Filled.ReceiptLong">Purchase History</MudNavLink>
+            <MudNavLink Href="/purchase-returns" Icon="@Icons.Material.Filled.KeyboardReturn">Purchase Returns</MudNavLink>
+            <MudNavLink Href="/pos" Icon="@Icons.Material.Filled.PointOfSale">POS Sale (Billing)</MudNavLink>
+            <MudNavLink Href="/sales" Icon="@Icons.Material.Filled.History">Sales History</MudNavLink>
+            <MudNavLink Href="/sales-returns" Icon="@Icons.Material.Filled.AssignmentReturn">Sales Returns</MudNavLink>
+            <MudNavLink Href="/expenses" Icon="@Icons.Material.Filled.MoneyOff">Misc Shop Spends</MudNavLink>
+            <MudNavLink Href="/cash-book" Icon="@Icons.Material.Filled.AccountBalanceWallet">Cash Book / Day Book</MudNavLink>
+            <MudNavLink Href="/suppliers" Icon="@Icons.Material.Filled.LocalShipping">Supplier Payable Ledger</MudNavLink>
+            <MudNavLink Href="/customers" Icon="@Icons.Material.Filled.People">Customer Udhaar Ledger</MudNavLink>
+            <MudNavLink Href="/stock-audit" Icon="@Icons.Material.Filled.FactCheck">Stock Audit & Loss</MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
+
+    <MudMainContent Style="background-color: #f5f7fa; min-height: 100vh;">
+        <div class="pa-4">
+            @Body
+        </div>
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private bool _drawerOpen = true;
+    private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+}

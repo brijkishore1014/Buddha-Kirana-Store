@@ -1,0 +1,190 @@
+@page "/cash-book"
+@using Buddha_Kirana_Store.Components.Shared
+@inject ICashBookService CashBookService
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.h5" Style="font-weight:600;">Cash Book / Day Book</MudText>
+    <div>
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" Class="mr-2" OnClick="SetToday">Today</MudButton>
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="SetThisMonth">This Month</MudButton>
+    </div>
+</div>
+
+<!-- FILTERS -->
+<MudPaper Elevation="2" Class="pa-4 mb-4">
+    <MudGrid>
+        <MudItem xs="6" sm="3">
+            <MudDatePicker Date="fromDate" DateChanged="OnFromChanged" Label="From Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudDatePicker Date="toDate" DateChanged="OnToChanged" Label="To Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudSelect T="int" Value="filterMode" ValueChanged="OnModeChanged" Label="Payment Mode" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">All Modes</MudSelectItem>
+                <MudSelectItem Value="@((int)PaymentMode.Cash)">Cash</MudSelectItem>
+                <MudSelectItem Value="@((int)PaymentMode.UPI)">UPI</MudSelectItem>
+                <MudSelectItem Value="@((int)PaymentMode.BankTransfer)">Bank Transfer</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<!-- BALANCES: opening + money in - money out = closing, per payment mode -->
+<MudGrid Class="mb-4">
+    @foreach (var b in report.Balances)
+    {
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Elevation="2" Class="pa-3">
+                <MudText Typo="Typo.subtitle1" Style="font-weight:600;">@ModeName(b.Mode)</MudText>
+                <div class="d-flex justify-space-between"><MudText Typo="Typo.body2">Opening</MudText><MudText Typo="Typo.body2">₹@b.Opening.ToString("0.00")</MudText></div>
+                <div class="d-flex justify-space-between"><MudText Typo="Typo.body2" Color="Color.Success">Money In</MudText><MudText Typo="Typo.body2" Color="Color.Success">+ ₹@b.MoneyIn.ToString("0.00")</MudText></div>
+                <div class="d-flex justify-space-between"><MudText Typo="Typo.body2" Color="Color.Error">Money Out</MudText><MudText Typo="Typo.body2" Color="Color.Error">- ₹@b.MoneyOut.ToString("0.00")</MudText></div>
+                <MudDivider Class="my-1" />
+                <div class="d-flex justify-space-between"><MudText Typo="Typo.subtitle2">Closing</MudText><MudText Typo="Typo.subtitle2">₹@b.Closing.ToString("0.00")</MudText></div>
+            </MudPaper>
+        </MudItem>
+    }
+    @if (report.Balances.Count > 1)
+    {
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Elevation="2" Class="pa-3" Style="border-left: 5px solid #1976d2;">
+                <MudText Typo="Typo.subtitle1" Style="font-weight:600;">All Modes</MudText>
+                <div class="d-flex justify-space-between"><MudText Typo="Typo.body2">Opening</MudText><MudText Typo="Typo.body2">₹@report.TotalOpening.ToString("0.00")</MudText></div>
+                <div class="d-flex justify-space-between"><MudText Typo="Typo.body2" Color="Color.Success">Money In</MudText><MudText Typo="Typo.body2" Color="Color.Success">+ ₹@report.TotalIn.ToString("0.00")</MudText></div>
+                <div class="d-flex justify-space-between"><MudText Typo="Typo.body2" Color="Color.Error">Money Out</MudText><MudText Typo="Typo.body2" Color="Color.Error">- ₹@report.TotalOut.ToString("0.00")</MudText></div>
+                <MudDivider Class="my-1" />
+                <div class="d-flex justify-space-between"><MudText Typo="Typo.subtitle2">Closing</MudText><MudText Typo="Typo.subtitle2">₹@report.TotalClosing.ToString("0.00")</MudText></div>
+            </MudPaper>
+        </MudItem>
+    }
+</MudGrid>
+
+@if (isLoading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-2" />
+}
+
+<!-- ENTRIES (oldest first, one server-side page at a time) -->
+<MudTable Items="@report.Entries.Items" RowsPerPage="@pageSize" Dense="true" Hover="true" Bordered="true" Striped="true" Elevation="2">
+    <HeaderContent>
+        <MudTh>Date</MudTh>
+        <MudTh>Mode</MudTh>
+        <MudTh>Type</MudTh>
+        <MudTh>Details</MudTh>
+        <MudTh Style="text-align:right;">Money In (₹)</MudTh>
+        <MudTh Style="text-align:right;">Money Out (₹)</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Date">@context.EntryDate.ToString("dd-MMM-yyyy")</MudTd>
+        <MudTd DataLabel="Mode">@ModeName(context.PaymentMode)</MudTd>
+        <MudTd DataLabel="Type"><MudChip T="string" Size="Size.Small" Color="Color.Default">@SourceLabel(context.Source)</MudChip></MudTd>
+        <MudTd DataLabel="Details">@context.Description</MudTd>
+        <MudTd DataLabel="Money In" Style="text-align:right;">
+            @if (context.Direction == CashFlowDirection.In)
+            {
+                <MudText Color="Color.Success" Style="font-weight:bold;">₹@context.Amount.ToString("0.00")</MudText>
+            }
+        </MudTd>
+        <MudTd DataLabel="Money Out" Style="text-align:right;">
+            @if (context.Direction == CashFlowDirection.Out)
+            {
+                <MudText Color="Color.Error" Style="font-weight:bold;">₹@context.Amount.ToString("0.00")</MudText>
+            }
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Class="pa-4">No cash book entries for this period.</MudText>
+    </NoRecordsContent>
+</MudTable>
+
+<MudPaper Elevation="0" Class="mt-1">
+    <PagerBar Page="currentPage" PageChanged="OnPageChanged"
+              PageSize="pageSize" PageSizeChanged="OnPageSizeChanged"
+              TotalCount="report.Entries.TotalCount" />
+</MudPaper>
+
+@code {
+    private CashBookReport report = CashBookReport.Empty;
+
+    private DateTime? fromDate = DateTime.Today;
+    private DateTime? toDate = DateTime.Today;
+    private int filterMode = 0;
+
+    private int currentPage = 1;
+    private int pageSize = 50;
+    private bool isLoading;
+    private int loadVersion;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private CashBookQuery BuildQuery() => new(
+        From: fromDate,
+        To: toDate,
+        Mode: filterMode == 0 ? null : (PaymentMode)filterMode);
+
+    private async Task LoadAsync()
+    {
+        var version = ++loadVersion;
+        isLoading = true;
+        try
+        {
+            var result = await CashBookService.GetReportAsync(BuildQuery(), currentPage, pageSize);
+            if (version != loadVersion)
+                return;
+
+            report = result;
+        }
+        finally
+        {
+            if (version == loadVersion)
+                isLoading = false;
+        }
+    }
+
+    private Task FilterChangedAsync()
+    {
+        currentPage = 1;
+        return LoadAsync();
+    }
+
+    private Task OnFromChanged(DateTime? date) { fromDate = date; return FilterChangedAsync(); }
+    private Task OnToChanged(DateTime? date) { toDate = date; return FilterChangedAsync(); }
+    private Task OnModeChanged(int mode) { filterMode = mode; return FilterChangedAsync(); }
+    private Task OnPageChanged(int page) { currentPage = page; return LoadAsync(); }
+    private Task OnPageSizeChanged(int size) { pageSize = size; return FilterChangedAsync(); }
+
+    private Task SetToday()
+    {
+        fromDate = toDate = DateTime.Today;
+        return FilterChangedAsync();
+    }
+
+    private Task SetThisMonth()
+    {
+        var today = DateTime.Today;
+        fromDate = new DateTime(today.Year, today.Month, 1);
+        toDate = today;
+        return FilterChangedAsync();
+    }
+
+    private static string ModeName(PaymentMode mode) => mode switch
+    {
+        PaymentMode.Cash => "Cash",
+        PaymentMode.UPI => "UPI",
+        PaymentMode.BankTransfer => "Bank Transfer",
+        _ => mode.ToString()
+    };
+
+    private static string SourceLabel(CashBookSource source) => source switch
+    {
+        CashBookSource.SalesReceipt => "Sale",
+        CashBookSource.CustomerPayment => "Udhaar recovery",
+        CashBookSource.SalesReturnRefund => "Sales return refund",
+        CashBookSource.PurchasePayment => "Purchase payment",
+        CashBookSource.SupplierPayment => "Supplier payout",
+        CashBookSource.PurchaseReturnRefund => "Purchase return refund",
+        CashBookSource.Expense => "Expense",
+        _ => source.ToString()
+    };
+}

@@ -1,0 +1,230 @@
+@page "/sales"
+@using Buddha_Kirana_Store.Components.Shared
+@inject ICustomerService CustomerService
+@inject ISalesService SalesService
+@inject NavigationManager Nav
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.h5" Style="font-weight:600;">Sales Invoices History</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PointOfSale" OnClick="@(() => Nav.NavigateTo("/pos"))">
+        + New POS Sale
+    </MudButton>
+</div>
+
+<!-- FILTER & SEARCH BAR -->
+<MudPaper Elevation="2" Class="pa-4 mb-4">
+    <MudGrid>
+        <MudItem xs="12" sm="3">
+            <MudTextField T="string" Value="searchString" ValueChanged="OnSearchChanged" Placeholder="Search Invoice No, Customer, or Item..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" DebounceInterval="400" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudSelect T="int" Value="filterCustomerId" ValueChanged="OnCustomerChanged" Label="Customer" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">All Customers</MudSelectItem>
+                @foreach (var c in customers)
+                {
+                    <MudSelectItem Value="@c.Id">@c.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudSelect T="int" Value="filterBillingMode" ValueChanged="OnBillingModeChanged" Label="Billing Mode" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">All Modes</MudSelectItem>
+                <MudSelectItem Value="@((int)BillingMode.PerItem)">Per-Item Price</MudSelectItem>
+                <MudSelectItem Value="@((int)BillingMode.LumpSum)">Lump-Sum Total</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker Date="fromDate" DateChanged="OnFromChanged" Label="From Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker Date="toDate" DateChanged="OnToChanged" Label="To Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="12" sm="1" Class="d-flex align-center">
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true" OnClick="ResetFilters">Reset</MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<!-- TOTALS FOR EVERYTHING THE FILTERS MATCH (not just this page) -->
+<div class="d-flex flex-wrap mb-3" style="gap:8px;">
+    <MudChip T="string" Color="Color.Default" Size="Size.Medium">Invoices: @summary.InvoiceCount</MudChip>
+    <MudChip T="string" Color="Color.Primary" Size="Size.Medium">Net Sales: ₹@summary.TotalNet.ToString("0.00")</MudChip>
+    <MudChip T="string" Color="Color.Error" Size="Size.Medium">Udhaar Given: ₹@summary.TotalCredit.ToString("0.00")</MudChip>
+    <MudChip T="string" Color="@(summary.TotalProfit >= 0 ? Color.Success : Color.Error)" Size="Size.Medium">Profit: ₹@summary.TotalProfit.ToString("0.00")</MudChip>
+</div>
+
+@if (isLoading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-2" />
+}
+
+<!-- SALES TABLE (one server-side page at a time) -->
+<MudTable Items="@pageItems" RowsPerPage="@pageSize" Dense="true" Hover="true" Bordered="true" Striped="true" Elevation="2">
+    <HeaderContent>
+        <MudTh>Invoice No</MudTh>
+        <MudTh>Sale Date</MudTh>
+        <MudTh>Customer</MudTh>
+        <MudTh>Billing Mode</MudTh>
+        <MudTh>Net Bill (₹)</MudTh>
+        <MudTh>Received (₹)</MudTh>
+        <MudTh>Udhaar / Credit (₹)</MudTh>
+        <MudTh>Profit (₹)</MudTh>
+        <MudTh>Details</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Invoice No"><b>@context.InvoiceNumber</b></MudTd>
+        <MudTd DataLabel="Sale Date">@context.InvoiceDate.ToString("dd-MMM-yyyy")</MudTd>
+        <MudTd DataLabel="Customer">@context.Customer?.Name</MudTd>
+        <MudTd DataLabel="Billing Mode">
+            <MudChip T="string" Color="@(context.BillingMode == BillingMode.LumpSum ? Color.Secondary : Color.Primary)" Size="Size.Small">
+                @(context.BillingMode == BillingMode.LumpSum ? "Lump-Sum" : "Per-Item")
+            </MudChip>
+        </MudTd>
+        <MudTd DataLabel="Net Bill"><b>₹@context.NetTotalAmount.ToString("0.00")</b></MudTd>
+        <MudTd DataLabel="Received">₹@context.ReceivedAmount.ToString("0.00")</MudTd>
+        <MudTd DataLabel="Udhaar">
+            <MudText Color="@(context.CreditAmount > 0 ? Color.Error : Color.Success)" Style="font-weight:bold;">
+                ₹@context.CreditAmount.ToString("0.00")
+            </MudText>
+        </MudTd>
+        <MudTd DataLabel="Profit">
+            @{
+                var profit = context.NetTotalAmount - context.TotalCostAmount;
+            }
+            <MudText Color="@(profit >= 0 ? Color.Success : Color.Error)" Style="font-weight:bold;">
+                ₹@profit.ToString("0.00")
+            </MudText>
+        </MudTd>
+        <MudTd DataLabel="Details">
+            <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small" OnClick="@(() => ToggleExpand(context.Id))">
+                @(expandedIds.Contains(context.Id) ? "Hide Items" : $"View ({context.Items.Count})")
+            </MudButton>
+        </MudTd>
+    </RowTemplate>
+    <ChildRowContent>
+        @if (expandedIds.Contains(context.Id))
+        {
+            <MudTr>
+                <td colspan="9" style="background-color: #f8f9fa; padding: 12px 24px;">
+                    <MudText Typo="Typo.subtitle2" Color="Color.Primary" Class="mb-2">
+                        <b>Items Sold in @context.InvoiceNumber (@context.BillingMode Mode)</b>
+                    </MudText>
+                    <MudSimpleTable Dense="true" Bordered="true" Style="background-color: white;">
+                        <thead>
+                            <tr style="background-color: #eceff1;">
+                                <th>Item Name</th>
+                                <th>Quantity</th>
+                                <th>Avg Cost Snapshot (₹)</th>
+                                <th>Selling Rate (₹)</th>
+                                <th>Line Total (₹)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var line in context.Items)
+                            {
+                                <tr>
+                                    <td>@line.Item?.Name</td>
+                                    <td>@line.Quantity.ToString("0.###") @line.Item?.Unit?.ShortCode</td>
+                                    <td>₹@line.CostPriceAtSale.ToString("0.00")</td>
+                                    <td>@(line.SellingUnitPrice.HasValue ? $"₹{line.SellingUnitPrice.Value:0.00}" : "Lump-Sum")</td>
+                                    <td><b>@(line.LineTotal.HasValue ? $"₹{line.LineTotal.Value:0.00}" : "—")</b></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                </td>
+            </MudTr>
+        }
+    </ChildRowContent>
+    <NoRecordsContent>
+        <MudText Class="pa-4">No sales invoices found matching your criteria.</MudText>
+    </NoRecordsContent>
+</MudTable>
+
+<MudPaper Elevation="0" Class="mt-1">
+    <PagerBar Page="currentPage" PageChanged="OnPageChanged"
+              PageSize="pageSize" PageSizeChanged="OnPageSizeChanged"
+              TotalCount="summary.InvoiceCount" />
+</MudPaper>
+
+@code {
+    private List<SalesInvoice> pageItems = [];
+    private List<Customer> customers = [];
+    private HashSet<int> expandedIds = [];
+    private SalesSummary summary = new(0, 0, 0, 0);
+
+    private string? searchString = "";
+    private int filterCustomerId = 0;
+    private int filterBillingMode = 0;
+    private DateTime? fromDate;
+    private DateTime? toDate;
+
+    private int currentPage = 1;
+    private int pageSize = 25;
+    private bool isLoading;
+    private int loadVersion;   // ignores a slow response if a newer request was started meanwhile
+
+    protected override async Task OnInitializedAsync()
+    {
+        customers = await CustomerService.GetCustomersAsync();
+        await LoadAsync();
+    }
+
+    private SalesInvoiceQuery BuildQuery() => new(
+        From: fromDate,
+        To: toDate,
+        CustomerId: filterCustomerId == 0 ? null : filterCustomerId,
+        Mode: filterBillingMode == 0 ? null : (BillingMode)filterBillingMode,
+        Search: searchString);
+
+    private async Task LoadAsync()
+    {
+        var version = ++loadVersion;
+        isLoading = true;
+        try
+        {
+            var result = await SalesService.SearchSalesInvoicesAsync(BuildQuery(), currentPage, pageSize);
+            if (version != loadVersion)
+                return;
+
+            pageItems = result.Invoices.Items.ToList();
+            summary = result.Summary;
+        }
+        finally
+        {
+            if (version == loadVersion)
+                isLoading = false;
+        }
+    }
+
+    // Any filter change starts again from the first page.
+    private Task FilterChangedAsync()
+    {
+        currentPage = 1;
+        return LoadAsync();
+    }
+
+    private Task OnSearchChanged(string? value) { searchString = value; return FilterChangedAsync(); }
+    private Task OnCustomerChanged(int id) { filterCustomerId = id; return FilterChangedAsync(); }
+    private Task OnBillingModeChanged(int mode) { filterBillingMode = mode; return FilterChangedAsync(); }
+    private Task OnFromChanged(DateTime? date) { fromDate = date; return FilterChangedAsync(); }
+    private Task OnToChanged(DateTime? date) { toDate = date; return FilterChangedAsync(); }
+
+    private Task OnPageChanged(int page) { currentPage = page; return LoadAsync(); }
+    private Task OnPageSizeChanged(int size) { pageSize = size; return FilterChangedAsync(); }
+
+    private void ToggleExpand(int id)
+    {
+        if (!expandedIds.Add(id)) expandedIds.Remove(id);
+    }
+
+    private Task ResetFilters()
+    {
+        searchString = "";
+        filterCustomerId = 0;
+        filterBillingMode = 0;
+        fromDate = null;
+        toDate = null;
+        return FilterChangedAsync();
+    }
+}

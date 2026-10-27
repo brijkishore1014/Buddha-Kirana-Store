@@ -1,0 +1,269 @@
+﻿@page "/customers"
+@inject ICustomerService CustomerService
+@inject IPartyPaymentService PartyPaymentService
+@inject ISnackbar Snackbar
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.h5" Style="font-weight:600;">Customer Udhaar Ledger (Accounts Receivable)</MudText>
+    <div class="d-flex gap-2 align-center">
+        <MudChip T="string" Color="Color.Warning" Variant="Variant.Filled" Size="Size.Medium">
+            Total Pending Udhaar in Market: ₹@NamedCustomers.Sum(c => c.CurrentReceivableBalance).ToString("0.00")
+        </MudChip>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="@(() => showNewCustomerBox = !showNewCustomerBox)">
+            + Add Customer
+        </MudButton>
+    </div>
+</div>
+
+<!-- INLINE NEW CUSTOMER BOX -->
+@if (showNewCustomerBox)
+{
+    <MudPaper Elevation="2" Class="pa-4 mb-4" Style="background-color: #e8f5e9;">
+        <MudText Typo="Typo.subtitle2" Class="mb-2"><b>Add New Named Customer</b></MudText>
+        <MudGrid>
+            <MudItem xs="12" sm="4">
+                <MudTextField @bind-Value="newCustName" Label="Customer Name *" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="newCustPhone" Label="Phone Number *" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="newCustAddress" Label="Address / Area" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="2" Class="d-flex align-center gap-1">
+                <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" OnClick="CreateCustomerAsync">Save</MudButton>
+                <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="@(() => showNewCustomerBox = false)">Cancel</MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+}
+
+<!-- 1. RECEIVE UDHAAR PAYMENT FROM CUSTOMER PANEL -->
+<MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-left: 5px solid #2e7d32;">
+    <MudText Typo="Typo.subtitle1" Class="mb-3" Style="font-weight:600;">💰 Receive Udhaar Payment from Customer</MudText>
+    <MudGrid>
+        <MudItem xs="12" sm="3">
+            <MudSelect T="int" Value="selectedCustomerId" ValueChanged="OnCustomerSelected" Label="Select Customer *" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">-- Select Customer --</MudSelectItem>
+                @foreach (var c in NamedCustomers)
+                {
+                    <MudSelectItem Value="@c.Id">@c.Name (Pending Udhaar: ₹@c.CurrentReceivableBalance.ToString("0.00"))</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudNumericField T="decimal" @bind-Value="receiveAmount" Label="Amount Received (₹) *" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudSelect T="PaymentMode" @bind-Value="receiveMode" Label="Payment Mode" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="PaymentMode.Cash">Cash</MudSelectItem>
+                <MudSelectItem Value="PaymentMode.UPI">UPI</MudSelectItem>
+                <MudSelectItem Value="PaymentMode.BankTransfer">Bank Transfer</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker @bind-Date="receiveDate" Label="Receipt Date *" MaxDate="@DateTime.Today" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" Editable="true" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudTextField @bind-Value="receiveRemarks" Label="Reference / Note" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="12" sm="1" Class="d-flex align-center">
+            <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true" OnClick="SaveReceiptAsync">
+                Receive
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<!-- 2. TABS: CUSTOMER UDHAAR BALANCES & RECOVERY HISTORY -->
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+    <!-- TAB 1: CUSTOMER BALANCES -->
+    <MudTabPanel Text="Customer Udhaar List" Icon="@Icons.Material.Filled.People">
+        <MudGrid Class="mb-3">
+            <MudItem xs="12" sm="6">
+                <MudTextField @bind-Value="custSearch" Placeholder="Search Customer by Name, Phone, or Address..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudSelect T="string" @bind-Value="udhaarFilter" Label="Udhaar Filter" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="@("ALL")">All Customers</MudSelectItem>
+                    <MudSelectItem Value="@("DUE")">Has Pending Udhaar (> ₹0)</MudSelectItem>
+                    <MudSelectItem Value="@("CLEAR")">Zero Balance (₹0)</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+
+        <MudTable Items="@FilteredCustomers" Dense="true" Hover="true" Bordered="true" Striped="true">
+            <HeaderContent>
+                <MudTh><MudTableSortLabel SortBy="new Func<Customer, object>(x => x.Name)">Customer Name</MudTableSortLabel></MudTh>
+                <MudTh>Phone Number</MudTh>
+                <MudTh>Address / Area</MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<Customer, object>(x => x.CurrentReceivableBalance)">Pending Udhaar (₹)</MudTableSortLabel></MudTh>
+                <MudTh>Quick Action</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Customer Name"><b>@context.Name</b></MudTd>
+                <MudTd DataLabel="Phone Number">@(context.Phone ?? "—")</MudTd>
+                <MudTd DataLabel="Address">@(context.Address ?? "—")</MudTd>
+                <MudTd DataLabel="Pending Udhaar">
+                    <MudText Color="@(context.CurrentReceivableBalance > 0 ? Color.Error : Color.Success)" Style="font-weight:bold;">
+                        ₹@context.CurrentReceivableBalance.ToString("0.00")
+                    </MudText>
+                </MudTd>
+                <MudTd DataLabel="Quick Action">
+                    @if (context.CurrentReceivableBalance > 0)
+                    {
+                        <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small" OnClick="@(() => OnCustomerSelected(context.Id))">
+                            Collect Udhaar
+                        </MudButton>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Success" Size="Size.Small">No Due</MudChip>
+                    }
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Class="pa-4">No customers match your filter criteria.</MudText>
+            </NoRecordsContent>
+            <PagerContent>
+                <MudTablePager PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudTable>
+    </MudTabPanel>
+
+    <!-- TAB 2: PAYMENT RECEIPT HISTORY -->
+    <MudTabPanel Text="Receipts & Recovery History" Icon="@Icons.Material.Filled.History">
+        <MudGrid Class="mb-3">
+            <MudItem xs="12" sm="4">
+                <MudTextField @bind-Value="txSearch" Placeholder="Search Customer or Remarks..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudDatePicker @bind-Date="txFromDate" Label="From Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudDatePicker @bind-Date="txToDate" Label="To Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+        </MudGrid>
+
+        <MudTable Items="@FilteredReceipts" Dense="true" Hover="true" Bordered="true" Striped="true">
+            <HeaderContent>
+                <MudTh><MudTableSortLabel SortBy="new Func<PaymentTransaction, object>(x => x.TransactionDate)">Date</MudTableSortLabel></MudTh>
+                <MudTh>Customer Name</MudTh>
+                <MudTh>Payment Mode</MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<PaymentTransaction, object>(x => x.Amount)">Amount Received (₹)</MudTableSortLabel></MudTh>
+                <MudTh>Remarks / Reference</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Date">@context.TransactionDate.ToString("dd-MMM-yyyy")</MudTd>
+                <MudTd DataLabel="Customer Name"><b>@GetCustomerName(context.PartyId)</b></MudTd>
+                <MudTd DataLabel="Payment Mode"><MudChip T="string" Size="Size.Small">@context.PaymentMode</MudChip></MudTd>
+                <MudTd DataLabel="Amount Received"><MudText Color="Color.Success" Style="font-weight:bold;">₹@context.Amount.ToString("0.00")</MudText></MudTd>
+                <MudTd DataLabel="Remarks">@context.Remarks</MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Class="pa-4">No customer payment transactions found.</MudText>
+            </NoRecordsContent>
+            <PagerContent>
+                <MudTablePager PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudTable>
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    private List<Customer> customers = [];
+    private List<PaymentTransaction> receipts = [];
+
+    private IEnumerable<Customer> NamedCustomers => customers.Where(c => !c.IsWalkIn);
+
+    // New Customer State
+    private bool showNewCustomerBox = false;
+    private string newCustName = "";
+    private string? newCustPhone;
+    private string? newCustAddress;
+
+    // Receive Payment State
+    private int selectedCustomerId = 0;
+    private decimal receiveAmount = 0;
+    private PaymentMode receiveMode = PaymentMode.Cash;
+    private DateTime? receiveDate = DateTime.Today;
+    private string? receiveRemarks;
+
+    // Filter State
+    private string custSearch = "";
+    private string udhaarFilter = "ALL";
+    private string txSearch = "";
+    private DateTime? txFromDate;
+    private DateTime? txToDate;
+
+    private IEnumerable<Customer> FilteredCustomers => NamedCustomers.Where(c =>
+        (udhaarFilter == "ALL" ||
+         (udhaarFilter == "DUE" && c.CurrentReceivableBalance > 0) ||
+         (udhaarFilter == "CLEAR" && c.CurrentReceivableBalance <= 0)) &&
+        (string.IsNullOrWhiteSpace(custSearch) ||
+         c.Name.Contains(custSearch, StringComparison.OrdinalIgnoreCase) ||
+         (c.Phone != null && c.Phone.Contains(custSearch, StringComparison.OrdinalIgnoreCase)) ||
+         (c.Address != null && c.Address.Contains(custSearch, StringComparison.OrdinalIgnoreCase)))
+    );
+
+    private IEnumerable<PaymentTransaction> FilteredReceipts => receipts.Where(r =>
+        (!txFromDate.HasValue || r.TransactionDate.Date >= txFromDate.Value.Date) &&
+        (!txToDate.HasValue || r.TransactionDate.Date <= txToDate.Value.Date) &&
+        (string.IsNullOrWhiteSpace(txSearch) ||
+         GetCustomerName(r.PartyId).Contains(txSearch, StringComparison.OrdinalIgnoreCase) ||
+         (r.Remarks != null && r.Remarks.Contains(txSearch, StringComparison.OrdinalIgnoreCase)))
+    );
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        customers = await CustomerService.GetCustomersAsync();
+        receipts = await PartyPaymentService.GetPaymentTransactionsAsync(PartyType.Customer);
+    }
+
+    private string GetCustomerName(int id) => customers.FirstOrDefault(c => c.Id == id)?.Name ?? $"Customer #{id}";
+
+    private void OnCustomerSelected(int custId)
+    {
+        selectedCustomerId = custId;
+        var cust = customers.FirstOrDefault(c => c.Id == custId);
+        if (cust != null && cust.CurrentReceivableBalance > 0)
+        {
+            receiveAmount = cust.CurrentReceivableBalance;
+        }
+    }
+
+    private async Task CreateCustomerAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newCustName))
+        {
+            Snackbar.Add("Customer Name is required.", Severity.Warning);
+            return;
+        }
+        await CustomerService.CreateCustomerAsync(newCustName, newCustPhone, newCustAddress);
+        newCustName = ""; newCustPhone = ""; newCustAddress = "";
+        showNewCustomerBox = false;
+        await LoadDataAsync();
+        Snackbar.Add("Customer added!", Severity.Success);
+    }
+
+    private async Task SaveReceiptAsync()
+    {
+        if (selectedCustomerId == 0 || receiveAmount <= 0 || receiveDate == null)
+        {
+            Snackbar.Add("Please select a Customer and enter a valid Amount and Date.", Severity.Warning);
+            return;
+        }
+
+        await PartyPaymentService.RecordPartyPaymentAsync(PartyType.Customer, selectedCustomerId, receiveAmount, receiveMode, receiveDate.Value, receiveRemarks);
+        receiveAmount = 0;
+        receiveRemarks = "";
+        selectedCustomerId = 0;
+        await LoadDataAsync();
+        Snackbar.Add("Udhaar payment received and customer balance updated!", Severity.Success);
+    }
+}

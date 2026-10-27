@@ -1,0 +1,380 @@
+﻿@page "/purchase-returns"
+@inject IItemService ItemService
+@inject IPurchaseReturnService PurchaseReturnService
+@inject ISupplierService SupplierService
+@inject ISnackbar Snackbar
+
+<div class="d-flex justify-space-between align-center mb-3">
+    <MudText Typo="Typo.h5" Style="font-weight:600;">Purchase Returns / Debit Notes (Return to Supplier)</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@(showEntryForm ? Icons.Material.Filled.Close : Icons.Material.Filled.KeyboardReturn)" OnClick="@(() => showEntryForm = !showEntryForm)">
+        @(showEntryForm ? "Hide Entry Form" : "+ New Purchase Return")
+    </MudButton>
+</div>
+
+<!-- 1. PURCHASE RETURN ENTRY FORM -->
+@if (showEntryForm)
+{
+    <MudPaper Elevation="3" Class="pa-4 mb-4" Style="border-left: 5px solid #d32f2f;">
+        <MudText Typo="Typo.subtitle1" Color="Color.Error" Class="mb-3" Style="font-weight:700;">
+            Return Damaged / Unsold Goods to Supplier (Stock-Out & Reduce Supplier Payable)
+        </MudText>
+
+        <MudGrid>
+            <MudItem xs="12" sm="4">
+                <MudSelect T="int" Label="Select Supplier *" @bind-Value="selectedSupplierId" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="0">-- Select Supplier --</MudSelectItem>
+                    @foreach (var s in suppliers)
+                    {
+                        <MudSelectItem Value="@s.Id">@s.Name (Payable Due: ₹@s.CurrentPayableBalance.ToString("0.00"))</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudDatePicker @bind-Date="returnDate" Label="Return Date *" MaxDate="@DateTime.Today" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" Editable="true" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudTextField @bind-Value="supplierInvoiceNo" Label="Orig. Supplier Bill No" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="remarks" Label="Reason / Remarks" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+        </MudGrid>
+
+        <!-- ADD ITEM TO RETURN -->
+        <MudGrid Class="mt-2">
+            <MudItem xs="12" sm="5">
+                <MudSelect T="int" Label="Select In-Stock Item to Return *" Value="selectedItemId" ValueChanged="OnItemSelected" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="0">-- Choose Item --</MudSelectItem>
+                    @foreach (var item in items.Where(i => i.CurrentStock > 0))
+                    {
+                        <MudSelectItem Value="@item.Id">
+                            @item.Name — Stock: @item.CurrentStock.ToString("0.###") @item.Unit?.ShortCode | Avg Cost: ₹@item.AvgCostPrice.ToString("0.00")
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudNumericField T="decimal" @bind-Value="entryQty" Label="Qty to Return *" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0.001m" />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudNumericField T="decimal" @bind-Value="entryReturnCost" Label="Purchase Return Rate / Unit (₹) *" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" />
+            </MudItem>
+            <MudItem xs="12" sm="2" Class="d-flex align-center">
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" FullWidth="true" OnClick="AddRow">+ Add Item</MudButton>
+            </MudItem>
+        </MudGrid>
+
+        <!-- CART TABLE -->
+        <MudSimpleTable Dense="true" Bordered="true" Hover="true" Class="mt-3 mb-3">
+            <thead>
+                <tr style="background-color: #eeeeee;">
+                    <th>Item Name</th>
+                    <th>Qty Returned (Deducted from Stock)</th>
+                    <th>Return Rate / Unit (₹)</th>
+                    <th>Line Total (₹)</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (!cartRows.Any())
+                {
+                    <tr><td colspan="5" class="text-center pa-2">No items added to this purchase return yet.</td></tr>
+                }
+                @foreach (var row in cartRows)
+                {
+                    <tr>
+                        <td><b>@row.ItemName</b></td>
+                        <td>@row.Quantity.ToString("0.###") @row.UnitCode</td>
+                        <td>₹@row.ReturnUnitPrice.ToString("0.00")</td>
+                        <td><b>₹@row.LineTotal.ToString("0.00")</b></td>
+                        <td>
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="@(() => cartRows.Remove(row))" />
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+
+        <!-- SETTLEMENT FOOTER (DEFAULT REFUND RECEIVED = 0 SO IT DEDUCTS FROM SUPPLIER PAYABLE) -->
+        <MudGrid>
+            <MudItem xs="12" sm="3" Class="d-flex align-center">
+                <MudText Typo="Typo.h6">Total Return: <b>₹@TotalReturnAmount.ToString("0.00")</b></MudText>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudNumericField T="decimal" @bind-Value="refundReceivedAmount" Label="Cash/UPI Received from Supplier (₹)" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" Max="@TotalReturnAmount" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudSelect T="PaymentMode" @bind-Value="refundMode" Label="Refund Mode" Disabled="@(refundReceivedAmount <= 0)" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="PaymentMode.Cash">Cash</MudSelectItem>
+                    <MudSelectItem Value="PaymentMode.UPI">UPI</MudSelectItem>
+                    <MudSelectItem Value="PaymentMode.BankTransfer">Bank</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="2" Class="d-flex flex-column justify-center">
+                <MudText Typo="Typo.caption">Deducted from Payable:</MudText>
+                <MudText Color="Color.Success" Style="font-weight:bold;">₹@PayableAdjusted.ToString("0.00")</MudText>
+            </MudItem>
+            <MudItem xs="6" sm="2" Class="d-flex align-center">
+                <MudButton Variant="Variant.Filled" Color="Color.Error" FullWidth="true" OnClick="SavePurchaseReturnAsync">
+                    Save Return
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+}
+
+<!-- 2. SEARCH & FILTER BAR -->
+<MudPaper Elevation="2" Class="pa-4 mb-3">
+    <MudGrid>
+        <MudItem xs="12" sm="4">
+            <MudTextField @bind-Value="searchString" Placeholder="Search Return No, Supplier, Bill No, or Item..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudSelect T="int" @bind-Value="filterSupplierId" Label="Filter Supplier" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">All Suppliers</MudSelectItem>
+                @foreach (var s in suppliers)
+                {
+                    <MudSelectItem Value="@s.Id">@s.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker @bind-Date="fromDate" Label="From Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker @bind-Date="toDate" Label="To Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="12" sm="1" Class="d-flex align-center">
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true" OnClick="ResetFilters">Reset</MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<!-- 3. PAGINATED PURCHASE RETURNS TABLE -->
+<MudTable Items="@FilteredReturns" Dense="true" Hover="true" Bordered="true" Striped="true" Elevation="2">
+    <HeaderContent>
+        <MudTh><MudTableSortLabel SortBy="new Func<PurchaseReturn, object>(x => x.ReturnNumber)">Return No</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<PurchaseReturn, object>(x => x.ReturnDate)">Date</MudTableSortLabel></MudTh>
+        <MudTh>Supplier</MudTh>
+        <MudTh>Supplier Bill No</MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<PurchaseReturn, object>(x => x.TotalReturnAmount)">Total Return (₹)</MudTableSortLabel></MudTh>
+        <MudTh>Refund Received (₹)</MudTh>
+        <MudTh>Deducted from Payable (₹)</MudTh>
+        <MudTh>Details</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Return No"><b>@context.ReturnNumber</b></MudTd>
+        <MudTd DataLabel="Date">@context.ReturnDate.ToString("dd-MMM-yyyy")</MudTd>
+        <MudTd DataLabel="Supplier">@context.Supplier?.Name</MudTd>
+        <MudTd DataLabel="Supplier Bill No">@(string.IsNullOrWhiteSpace(context.SupplierInvoiceNo) ? "—" : context.SupplierInvoiceNo)</MudTd>
+        <MudTd DataLabel="Total Return"><b>₹@context.TotalReturnAmount.ToString("0.00")</b></MudTd>
+        <MudTd DataLabel="Refund Received">₹@context.RefundReceivedAmount.ToString("0.00")</MudTd>
+        <MudTd DataLabel="Deducted from Payable">
+            <MudText Color="Color.Success" Style="font-weight:bold;">₹@context.PayableAdjustedAmount.ToString("0.00")</MudText>
+        </MudTd>
+        <MudTd DataLabel="Details">
+            <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small" OnClick="@(() => ToggleExpand(context.Id))">
+                @(expandedIds.Contains(context.Id) ? "Hide Items" : $"Items ({context.Items.Count})")
+            </MudButton>
+        </MudTd>
+    </RowTemplate>
+    <ChildRowContent>
+        @if (expandedIds.Contains(context.Id))
+        {
+            <MudTr>
+                <td colspan="8" style="background-color: #f8f9fa; padding: 12px 24px;">
+                    <MudText Typo="Typo.subtitle2" Color="Color.Error" Class="mb-2">
+                        <b>Items Returned to Supplier in @context.ReturnNumber @(string.IsNullOrWhiteSpace(context.Remarks) ? "" : $"— Note: {context.Remarks}")</b>
+                    </MudText>
+                    <MudSimpleTable Dense="true" Bordered="true" Style="background-color: white;">
+                        <thead>
+                            <tr style="background-color: #eceff1;">
+                                <th>Item Name</th>
+                                <th>Returned Qty</th>
+                                <th>Return Rate (₹)</th>
+                                <th>Line Total (₹)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var line in context.Items)
+                            {
+                                <tr>
+                                    <td>@line.Item?.Name</td>
+                                    <td>@line.Quantity.ToString("0.###") @line.Item?.Unit?.ShortCode</td>
+                                    <td>₹@line.ReturnUnitPrice.ToString("0.00")</td>
+                                    <td><b>₹@line.LineTotal.ToString("0.00")</b></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                </td>
+            </MudTr>
+        }
+    </ChildRowContent>
+    <NoRecordsContent>
+        <MudText Class="pa-4">No purchase returns recorded yet.</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new int[] { 10, 25, 50 }" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private List<Supplier> suppliers = [];
+    private List<Item> items = [];
+    private List<PurchaseReturn> purchaseReturns = [];
+    private HashSet<int> expandedIds = [];
+
+    private bool showEntryForm = true;
+    private int selectedSupplierId = 0;
+    private DateTime? returnDate = DateTime.Today;
+    private string? supplierInvoiceNo;
+    private string? remarks;
+
+    private int selectedItemId = 0;
+    private decimal entryQty = 1;
+    private decimal entryReturnCost = 0;
+
+    // Defaults to 0 so the return value automatically reduces Supplier Payable Balance
+    private decimal refundReceivedAmount = 0;
+    private PaymentMode refundMode = PaymentMode.Cash;
+    private List<ReturnRow> cartRows = [];
+
+    // Filter State
+    private string searchString = "";
+    private int filterSupplierId = 0;
+    private DateTime? fromDate;
+    private DateTime? toDate;
+
+    private decimal TotalReturnAmount => cartRows.Sum(r => r.LineTotal);
+    private decimal PayableAdjusted => Math.Max(0, TotalReturnAmount - refundReceivedAmount);
+
+    private IEnumerable<PurchaseReturn> FilteredReturns => purchaseReturns.Where(r =>
+        (filterSupplierId == 0 || r.SupplierId == filterSupplierId) &&
+        (!fromDate.HasValue || r.ReturnDate.Date >= fromDate.Value.Date) &&
+        (!toDate.HasValue || r.ReturnDate.Date <= toDate.Value.Date) &&
+        (string.IsNullOrWhiteSpace(searchString) ||
+         r.ReturnNumber.Contains(searchString, StringComparison.OrdinalIgnoreCase) ||
+         (r.SupplierInvoiceNo != null && r.SupplierInvoiceNo.Contains(searchString, StringComparison.OrdinalIgnoreCase)) ||
+         (r.Supplier != null && r.Supplier.Name.Contains(searchString, StringComparison.OrdinalIgnoreCase)) ||
+         r.Items.Any(i => i.Item != null && i.Item.Name.Contains(searchString, StringComparison.OrdinalIgnoreCase)))
+    );
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        suppliers = await SupplierService.GetSuppliersAsync();
+        items = await ItemService.GetItemsAsync();
+        purchaseReturns = await PurchaseReturnService.GetPurchaseReturnsAsync();
+    }
+
+    private void OnItemSelected(int itemId)
+    {
+        selectedItemId = itemId;
+        var item = items.FirstOrDefault(i => i.Id == itemId);
+        if (item != null) entryReturnCost = item.AvgCostPrice;
+    }
+
+    private void AddRow()
+    {
+        var item = items.FirstOrDefault(i => i.Id == selectedItemId);
+        if (item == null || entryQty <= 0 || entryReturnCost < 0)
+        {
+            Snackbar.Add("Please select an item and enter valid Quantity and Rate.", Severity.Warning);
+            return;
+        }
+        if (!item.Unit.AllowDecimals && entryQty % 1 != 0)
+        {
+            Snackbar.Add($"'{item.Name}' does not allow decimal quantities.", Severity.Error);
+            return;
+        }
+
+        decimal alreadyInCart = cartRows.Where(r => r.ItemId == item.Id).Sum(r => r.Quantity);
+        if (alreadyInCart + entryQty > item.CurrentStock)
+        {
+            Snackbar.Add($"Cannot return more than available stock ({item.CurrentStock:0.###} {item.Unit.ShortCode}).", Severity.Error);
+            return;
+        }
+
+        cartRows.Add(new ReturnRow
+        {
+            ItemId = item.Id,
+            ItemName = item.Name,
+            UnitCode = item.Unit.ShortCode,
+            Quantity = entryQty,
+            ReturnUnitPrice = entryReturnCost
+        });
+
+        selectedItemId = 0;
+        entryQty = 1;
+        entryReturnCost = 0;
+    }
+
+    private async Task SavePurchaseReturnAsync()
+    {
+        if (selectedSupplierId == 0 || !cartRows.Any() || returnDate == null)
+        {
+            Snackbar.Add("Please select a Supplier, valid Date, and add at least one item.", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            var ret = new PurchaseReturn
+            {
+                SupplierId = selectedSupplierId,
+                ReturnDate = returnDate.Value,
+                SupplierInvoiceNo = supplierInvoiceNo,
+                Remarks = remarks,
+                RefundReceivedAmount = refundReceivedAmount,
+                RefundMode = refundMode,
+                Items = cartRows.Select(r => new PurchaseReturnItem
+                {
+                    ItemId = r.ItemId,
+                    Quantity = r.Quantity,
+                    ReturnUnitPrice = r.ReturnUnitPrice,
+                    LineTotal = r.LineTotal
+                }).ToList()
+            };
+
+            await PurchaseReturnService.SavePurchaseReturnAsync(ret);
+            cartRows.Clear();
+            supplierInvoiceNo = "";
+            remarks = "";
+            refundReceivedAmount = 0;
+            await LoadDataAsync();
+            Snackbar.Add("Purchase Return saved! Stock deducted and Supplier Payable reduced.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private void ToggleExpand(int id)
+    {
+        if (!expandedIds.Add(id)) expandedIds.Remove(id);
+    }
+
+    private void ResetFilters()
+    {
+        searchString = "";
+        filterSupplierId = 0;
+        fromDate = null;
+        toDate = null;
+    }
+
+    private class ReturnRow
+    {
+        public int ItemId { get; set; }
+        public string ItemName { get; set; } = "";
+        public string UnitCode { get; set; } = "";
+        public decimal Quantity { get; set; }
+        public decimal ReturnUnitPrice { get; set; }
+        public decimal LineTotal => Math.Round(Quantity * ReturnUnitPrice, 2);
+    }
+}

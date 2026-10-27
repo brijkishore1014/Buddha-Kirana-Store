@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="Buddha Kirana Store/Buddha Kirana Store.csproj">
+    <Deploy Solution="Debug|*" />
+  </Project>
+  <Project Path="Buddha_Kirana_Store.Application/Buddha_Kirana_Store.Application.csproj" />
+  <Project Path="Buddha_Kirana_Store.Domain/Buddha_Kirana_Store.Domain.csproj" />
+  <Project Path="Buddha_Kirana_Store.Infrastructure/Buddha_Kirana_Store.Infrastructure.csproj" />
+</Solution>

@@ -1,0 +1,251 @@
+﻿@page "/stock-audit"
+@inject IStockAdjustmentService AdjustmentService
+@inject IItemService ItemService
+@inject ISnackbar Snackbar
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.h5" Style="font-weight:600;">Stock Audit, Discrepancies & Company Loss</MudText>
+    <MudChip T="string" Color="Color.Error" Variant="Variant.Filled" Size="Size.Medium">
+        Total Inventory Loss Logged: ₹@FilteredAdjustments.Where(a => a.IsCompanyLoss).Sum(a => a.TotalLossAmount).ToString("0.00")
+    </MudChip>
+</div>
+
+<!-- 1. RECORD STOCK ADJUSTMENT / LOSS ENTRY -->
+<MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-left: 5px solid #ff9800;">
+    <MudText Typo="Typo.subtitle1" Class="mb-3" Style="font-weight:600;">📋 Record Manual Stock Adjustment / Loss</MudText>
+
+    <MudGrid>
+        <MudItem xs="12" sm="4">
+            <MudSelect T="int" @bind-Value="selectedItemId" Label="Select Item *" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">-- Choose Item --</MudSelectItem>
+                @foreach (var item in items)
+                {
+                    <MudSelectItem Value="@item.Id">
+                        @item.Name — Stock: @item.CurrentStock.ToString("0.###") @item.Unit?.ShortCode (Avg Cost: ₹@item.AvgCostPrice.ToString("0.00"))
+                    </MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+
+        <MudItem xs="12" sm="3">
+            <MudSelect T="AdjustmentReason" Value="selectedReason" ValueChanged="OnReasonChanged" Label="Adjustment Reason *" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="AdjustmentReason.Damaged">Damaged Stock (Company Loss)</MudSelectItem>
+                <MudSelectItem Value="AdjustmentReason.Expired">Expired / Spoiled (Company Loss)</MudSelectItem>
+                <MudSelectItem Value="AdjustmentReason.Theft">Theft / Missing (Company Loss)</MudSelectItem>
+                <MudSelectItem Value="AdjustmentReason.AuditCorrection">Audit Count Correction (No Loss)</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+
+        @if (selectedReason == AdjustmentReason.AuditCorrection)
+        {
+            <MudItem xs="6" sm="2">
+                <MudSelect T="string" @bind-Value="correctionDirection" Label="Correction Type" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="@("REDUCE")">Reduce Stock (-)</MudSelectItem>
+                    <MudSelectItem Value="@("ADD")">Add Found Stock (+)</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+        }
+
+        <MudItem xs="6" sm="2">
+            <MudNumericField T="decimal" @bind-Value="adjustQty" Label="@($"Quantity ({SelectedItem?.Unit?.ShortCode ?? "Unit"}) *")" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0.001m" />
+        </MudItem>
+
+        <MudItem xs="6" sm="2">
+            <MudDatePicker @bind-Date="adjustDate" Label="Date *" MaxDate="@DateTime.Today" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" Editable="true" />
+        </MudItem>
+
+        <MudItem xs="12" sm="6">
+            <MudTextField @bind-Value="remarks" Label="Mandatory Reason / Remarks (e.g. 2 packets torn during unloading) *" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+
+        <MudItem xs="12" sm="4" Class="d-flex align-center">
+            @if (IsLossReason && SelectedItem != null && adjustQty > 0)
+            {
+                <MudAlert Severity="Severity.Error" Dense="true" Class="py-1 px-3">
+                    <b>Company Loss Impact: ₹@((adjustQty * SelectedItem.AvgCostPrice).ToString("0.00"))</b>
+                </MudAlert>
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    <i>Audit correction adjusts stock quantity without booking a financial loss.</i>
+                </MudText>
+            }
+        </MudItem>
+
+        <MudItem xs="12" sm="2" Class="d-flex align-center">
+            <MudButton Variant="Variant.Filled" Color="@(IsLossReason ? Color.Error : Color.Warning)" FullWidth="true" OnClick="SaveAdjustmentAsync">
+                Save Audit
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<!-- 2. SEARCH & FILTER BAR -->
+<MudPaper Elevation="2" Class="pa-4 mb-3">
+    <MudGrid>
+        <MudItem xs="12" sm="4">
+            <MudTextField @bind-Value="searchString" Placeholder="Search Item Name or Remarks..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudSelect T="string" @bind-Value="lossFilter" Label="Filter Type" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="@("ALL")">All Adjustments</MudSelectItem>
+                <MudSelectItem Value="@("LOSS")">Company Losses Only (Damaged/Expired/Theft)</MudSelectItem>
+                <MudSelectItem Value="@("NONLOSS")">Audit & Opening Stock Corrections</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker @bind-Date="fromDate" Label="From Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker @bind-Date="toDate" Label="To Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="12" sm="1" Class="d-flex align-center">
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true" OnClick="ResetFilters">Reset</MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<!-- 3. PAGINATED ADJUSTMENTS & LOSS TABLE -->
+<MudTable Items="@FilteredAdjustments" Dense="true" Hover="true" Bordered="true" Striped="true" Elevation="2">
+    <HeaderContent>
+        <MudTh><MudTableSortLabel SortBy="new Func<StockAdjustment, object>(x => x.AdjustmentDate)">Date</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<StockAdjustment, object>(x => x.Item?.Name ?? string.Empty)">Item Name</MudTableSortLabel></MudTh>
+        <MudTh>Reason</MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<StockAdjustment, object>(x => x.QuantityChanged)">Stock Change</MudTableSortLabel></MudTh>
+        <MudTh>Cost Snapshot (₹)</MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<StockAdjustment, object>(x => x.TotalLossAmount)">Company Loss (₹)</MudTableSortLabel></MudTh>
+        <MudTh>Remarks</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Date">@context.AdjustmentDate.ToString("dd-MMM-yyyy")</MudTd>
+        <MudTd DataLabel="Item Name"><b>@context.Item?.Name</b></MudTd>
+        <MudTd DataLabel="Reason">
+            <MudChip T="string" Color="@(context.IsCompanyLoss ? Color.Error : Color.Info)" Size="Size.Small">
+                @context.ReasonType
+            </MudChip>
+        </MudTd>
+        <MudTd DataLabel="Stock Change">
+            <MudText Color="@(context.QuantityChanged < 0 ? Color.Error : Color.Success)" Style="font-weight:bold;">
+                @(context.QuantityChanged > 0 ? "+" : "")@context.QuantityChanged.ToString("0.###") @context.Item?.Unit?.ShortCode
+            </MudText>
+        </MudTd>
+        <MudTd DataLabel="Cost Snapshot">₹@context.UnitCostSnapshot.ToString("0.00")</MudTd>
+        <MudTd DataLabel="Company Loss">
+            @if (context.IsCompanyLoss)
+            {
+                <MudText Color="Color.Error" Style="font-weight:bold;">₹@context.TotalLossAmount.ToString("0.00")</MudText>
+            }
+            else
+            {
+                <span>₹0.00</span>
+            }
+        </MudTd>
+        <MudTd DataLabel="Remarks">@context.Remarks</MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Class="pa-4">No stock adjustments or losses recorded yet.</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new int[] { 10, 25, 50, 100 }" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private List<Item> items = [];
+    private List<StockAdjustment> adjustments = [];
+
+    // Form State
+    private int selectedItemId = 0;
+    private AdjustmentReason selectedReason = AdjustmentReason.Damaged;
+    private string correctionDirection = "REDUCE";
+    private decimal adjustQty = 1;
+    private DateTime? adjustDate = DateTime.Today;
+    private string remarks = "";
+
+    // Filter State
+    private string searchString = "";
+    private string lossFilter = "ALL";
+    private DateTime? fromDate;
+    private DateTime? toDate;
+
+    private Item? SelectedItem => items.FirstOrDefault(i => i.Id == selectedItemId);
+    private bool IsLossReason => selectedReason is AdjustmentReason.Damaged or AdjustmentReason.Expired or AdjustmentReason.Theft;
+
+    private IEnumerable<StockAdjustment> FilteredAdjustments => adjustments.Where(a =>
+        (lossFilter == "ALL" ||
+         (lossFilter == "LOSS" && a.IsCompanyLoss) ||
+         (lossFilter == "NONLOSS" && !a.IsCompanyLoss)) &&
+        (!fromDate.HasValue || a.AdjustmentDate.Date >= fromDate.Value.Date) &&
+        (!toDate.HasValue || a.AdjustmentDate.Date <= toDate.Value.Date) &&
+        (string.IsNullOrWhiteSpace(searchString) ||
+         (a.Item != null && a.Item.Name.Contains(searchString, StringComparison.OrdinalIgnoreCase)) ||
+         a.Remarks.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+    );
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        items = await ItemService.GetItemsAsync();
+        adjustments = await AdjustmentService.GetStockAdjustmentsAsync();
+    }
+
+    private void OnReasonChanged(AdjustmentReason reason)
+    {
+        selectedReason = reason;
+    }
+
+    private async Task SaveAdjustmentAsync()
+    {
+        if (SelectedItem == null)
+        {
+            Snackbar.Add("Please select an item.", Severity.Warning);
+            return;
+        }
+        if (adjustQty <= 0 || adjustDate == null)
+        {
+            Snackbar.Add("Please enter a valid Quantity and Date.", Severity.Warning);
+            return;
+        }
+        if (!SelectedItem.Unit.AllowDecimals && adjustQty % 1 != 0)
+        {
+            Snackbar.Add($"'{SelectedItem.Name}' is measured in {SelectedItem.Unit.ShortCode} and does not allow decimals.", Severity.Error);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(remarks))
+        {
+            Snackbar.Add("Please enter Remarks explaining why this stock is being adjusted.", Severity.Warning);
+            return;
+        }
+
+        // Loss reasons always reduce stock; AuditCorrection can reduce or add
+        bool isReduction = IsLossReason || correctionDirection == "REDUCE";
+        decimal signedQty = isReduction ? -Math.Abs(adjustQty) : Math.Abs(adjustQty);
+
+        try
+        {
+            await AdjustmentService.SaveStockAdjustmentAsync(SelectedItem.Id, signedQty, selectedReason, adjustDate.Value, remarks);
+            selectedItemId = 0;
+            adjustQty = 1;
+            remarks = "";
+            await LoadDataAsync();
+            Snackbar.Add(IsLossReason ? "Stock deducted and logged in Company Loss!" : "Stock audit adjustment saved!", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private void ResetFilters()
+    {
+        searchString = "";
+        lossFilter = "ALL";
+        fromDate = null;
+        toDate = null;
+    }
+}

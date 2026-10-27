@@ -1,0 +1,235 @@
+@page "/purchases"
+@using Buddha_Kirana_Store.Components.Shared
+@inject IPurchaseService PurchaseService
+@inject ISupplierService SupplierService
+@inject NavigationManager Nav
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.h5" Style="font-weight:600;">Purchase Invoices History</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.AddShoppingCart" OnClick="@(() => Nav.NavigateTo("/purchase"))">
+        + New Purchase Entry
+    </MudButton>
+</div>
+
+<!-- FILTER & SEARCH BAR -->
+<MudPaper Elevation="2" Class="pa-4 mb-4">
+    <MudGrid>
+        <MudItem xs="12" sm="3">
+            <MudTextField T="string" Value="searchString" ValueChanged="OnSearchChanged" Placeholder="Search Bill No, Supplier, or Item..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" DebounceInterval="400" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudSelect T="int" Value="filterSupplierId" ValueChanged="OnSupplierChanged" Label="Filter Supplier" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">All Suppliers</MudSelectItem>
+                @foreach (var s in suppliers)
+                {
+                    <MudSelectItem Value="@s.Id">@s.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudSelect T="int" Value="filterStatus" ValueChanged="OnStatusChanged" Label="Payment Status" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">All Statuses</MudSelectItem>
+                <MudSelectItem Value="@((int)PaymentStatus.Paid)">Paid</MudSelectItem>
+                <MudSelectItem Value="@((int)PaymentStatus.Partial)">Partial</MudSelectItem>
+                <MudSelectItem Value="@((int)PaymentStatus.Unpaid)">Unpaid (Credit)</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker Date="fromDate" DateChanged="OnFromChanged" Label="From Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker Date="toDate" DateChanged="OnToChanged" Label="To Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="12" sm="1" Class="d-flex align-center">
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true" OnClick="ResetFilters">Reset</MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<!-- TOTALS FOR EVERYTHING THE FILTERS MATCH (not just this page) -->
+<div class="d-flex flex-wrap mb-3" style="gap:8px;">
+    <MudChip T="string" Color="Color.Default" Size="Size.Medium">Bills: @summary.InvoiceCount</MudChip>
+    <MudChip T="string" Color="Color.Primary" Size="Size.Medium">Total Purchased: ₹@summary.TotalBill.ToString("0.00")</MudChip>
+    <MudChip T="string" Color="Color.Success" Size="Size.Medium">Paid: ₹@summary.TotalPaid.ToString("0.00")</MudChip>
+    <MudChip T="string" Color="Color.Error" Size="Size.Medium">Balance Due: ₹@summary.TotalBalanceDue.ToString("0.00")</MudChip>
+</div>
+
+@if (isLoading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-2" />
+}
+
+<!-- PURCHASE TABLE (one server-side page at a time) -->
+<MudTable Items="@pageItems" RowsPerPage="@pageSize" Dense="true" Hover="true" Bordered="true" Striped="true" Elevation="2">
+    <HeaderContent>
+        <MudTh>ID</MudTh>
+        <MudTh>Purchase Date</MudTh>
+        <MudTh>Supplier</MudTh>
+        <MudTh>Supplier Bill No</MudTh>
+        <MudTh>Items</MudTh>
+        <MudTh>Total Bill (₹)</MudTh>
+        <MudTh>Paid (₹)</MudTh>
+        <MudTh>Balance Due (₹)</MudTh>
+        <MudTh>Status</MudTh>
+        <MudTh>Details</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="ID">#@context.Id</MudTd>
+        <MudTd DataLabel="Purchase Date"><b>@context.InvoiceDate.ToString("dd-MMM-yyyy")</b></MudTd>
+        <MudTd DataLabel="Supplier">@context.Supplier?.Name</MudTd>
+        <MudTd DataLabel="Supplier Bill No">@(string.IsNullOrWhiteSpace(context.SupplierInvoiceNo) ? "—" : context.SupplierInvoiceNo)</MudTd>
+        <MudTd DataLabel="Items">@context.Items.Count item(s)</MudTd>
+        <MudTd DataLabel="Total Bill"><b>₹@context.TotalAmount.ToString("0.00")</b></MudTd>
+        <MudTd DataLabel="Paid">₹@context.PaidAmount.ToString("0.00")</MudTd>
+        <MudTd DataLabel="Balance Due">
+            <MudText Color="@(context.BalanceDue > 0 ? Color.Error : Color.Success)" Style="font-weight:bold;">
+                ₹@context.BalanceDue.ToString("0.00")
+            </MudText>
+        </MudTd>
+        <MudTd DataLabel="Status">
+            @if (context.PaymentStatus == PaymentStatus.Paid)
+            {
+                <MudChip T="string" Color="Color.Success" Size="Size.Small">Paid</MudChip>
+            }
+            else if (context.PaymentStatus == PaymentStatus.Partial)
+            {
+                <MudChip T="string" Color="Color.Warning" Size="Size.Small">Partial</MudChip>
+            }
+            else
+            {
+                <MudChip T="string" Color="Color.Error" Size="Size.Small">Unpaid</MudChip>
+            }
+        </MudTd>
+        <MudTd DataLabel="Details">
+            <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small" OnClick="@(() => ToggleExpand(context.Id))">
+                @(expandedInvoiceIds.Contains(context.Id) ? "Hide Items" : "View Items")
+            </MudButton>
+        </MudTd>
+    </RowTemplate>
+    <ChildRowContent>
+        @if (expandedInvoiceIds.Contains(context.Id))
+        {
+            <MudTr>
+                <td colspan="10" style="background-color: #f8f9fa; padding: 12px 24px;">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2" Color="Color.Primary">
+                        <b>Items in Purchase #@context.Id (Bill No: @(context.SupplierInvoiceNo ?? "N/A"))</b>
+                    </MudText>
+                    <MudSimpleTable Dense="true" Bordered="true" Style="background-color: white;">
+                        <thead>
+                            <tr style="background-color: #eceff1;">
+                                <th>Item Name</th>
+                                <th>Quantity</th>
+                                <th>Purchase Rate / Unit (₹)</th>
+                                <th>Line Total (₹)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var line in context.Items)
+                            {
+                                <tr>
+                                    <td>@line.Item?.Name</td>
+                                    <td>@line.Quantity.ToString("0.###") @line.Item?.Unit?.ShortCode</td>
+                                    <td>₹@line.PurchaseUnitPrice.ToString("0.00")</td>
+                                    <td><b>₹@line.LineTotal.ToString("0.00")</b></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                </td>
+            </MudTr>
+        }
+    </ChildRowContent>
+    <NoRecordsContent>
+        <MudText Class="pa-4">No purchase records match your search/filter criteria.</MudText>
+    </NoRecordsContent>
+</MudTable>
+
+<MudPaper Elevation="0" Class="mt-1">
+    <PagerBar Page="currentPage" PageChanged="OnPageChanged"
+              PageSize="pageSize" PageSizeChanged="OnPageSizeChanged"
+              TotalCount="summary.InvoiceCount" />
+</MudPaper>
+
+@code {
+    private List<PurchaseInvoice> pageItems = [];
+    private List<Supplier> suppliers = [];
+    private HashSet<int> expandedInvoiceIds = [];
+    private PurchaseSummary summary = new(0, 0, 0, 0);
+
+    // Filter & Search States
+    private string? searchString = "";
+    private int filterSupplierId = 0;
+    private int filterStatus = 0;
+    private DateTime? fromDate;
+    private DateTime? toDate;
+
+    private int currentPage = 1;
+    private int pageSize = 25;
+    private bool isLoading;
+    private int loadVersion;   // ignores a slow response if a newer request was started meanwhile
+
+    protected override async Task OnInitializedAsync()
+    {
+        suppliers = await SupplierService.GetSuppliersAsync();
+        await LoadAsync();
+    }
+
+    private PurchaseInvoiceQuery BuildQuery() => new(
+        From: fromDate,
+        To: toDate,
+        SupplierId: filterSupplierId == 0 ? null : filterSupplierId,
+        Status: filterStatus == 0 ? null : (PaymentStatus)filterStatus,
+        Search: searchString);
+
+    private async Task LoadAsync()
+    {
+        var version = ++loadVersion;
+        isLoading = true;
+        try
+        {
+            var result = await PurchaseService.SearchPurchaseInvoicesAsync(BuildQuery(), currentPage, pageSize);
+            if (version != loadVersion)
+                return;
+
+            pageItems = result.Invoices.Items.ToList();
+            summary = result.Summary;
+        }
+        finally
+        {
+            if (version == loadVersion)
+                isLoading = false;
+        }
+    }
+
+    // Any filter change starts again from the first page.
+    private Task FilterChangedAsync()
+    {
+        currentPage = 1;
+        return LoadAsync();
+    }
+
+    private Task OnSearchChanged(string? value) { searchString = value; return FilterChangedAsync(); }
+    private Task OnSupplierChanged(int id) { filterSupplierId = id; return FilterChangedAsync(); }
+    private Task OnStatusChanged(int status) { filterStatus = status; return FilterChangedAsync(); }
+    private Task OnFromChanged(DateTime? date) { fromDate = date; return FilterChangedAsync(); }
+    private Task OnToChanged(DateTime? date) { toDate = date; return FilterChangedAsync(); }
+
+    private Task OnPageChanged(int page) { currentPage = page; return LoadAsync(); }
+    private Task OnPageSizeChanged(int size) { pageSize = size; return FilterChangedAsync(); }
+
+    private void ToggleExpand(int invoiceId)
+    {
+        if (!expandedInvoiceIds.Add(invoiceId))
+            expandedInvoiceIds.Remove(invoiceId);
+    }
+
+    private Task ResetFilters()
+    {
+        searchString = "";
+        filterSupplierId = 0;
+        filterStatus = 0;
+        fromDate = null;
+        toDate = null;
+        return FilterChangedAsync();
+    }
+}

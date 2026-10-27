@@ -1,0 +1,374 @@
+﻿@page "/purchase"
+@inject IItemService ItemService
+@inject IPurchaseService PurchaseService
+@inject ISupplierService SupplierService
+@inject IUnitOfMeasureService UnitService
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<div class="d-flex justify-space-between align-center mb-3">
+    <MudText Typo="Typo.h5" Style="font-weight:600;">Purchase Entry (Stock-In)</MudText>
+    <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ReceiptLong" OnClick="@(() => Nav.NavigateTo("/purchases"))">
+        View Purchase History
+    </MudButton>
+</div>
+
+<!-- 1. SUPPLIER & INVOICE HEADER -->
+<MudPaper Elevation="2" Class="pa-4 mb-4">
+    <MudGrid>
+        <MudItem xs="12" sm="5">
+            <div class="d-flex gap-2 align-center">
+                <MudSelect T="int" Label="Select Supplier *" @bind-Value="selectedSupplierId" Variant="Variant.Outlined" Margin="Margin.Dense" FullWidth="true">
+                    <MudSelectItem Value="0">-- Select Supplier --</MudSelectItem>
+                    @foreach (var s in suppliers)
+                    {
+                        <MudSelectItem Value="@s.Id">@s.Name (Payable: ₹@s.CurrentPayableBalance.ToString("0.00"))</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="@(() => showNewSupplierBox = !showNewSupplierBox)">
+                    + New
+                </MudButton>
+            </div>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudTextField @bind-Value="supplierInvoiceNo" Label="Supplier Bill / Invoice No" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudDatePicker @bind-Date="purchaseDate" Label="Purchase Date *" MaxDate="@DateTime.Today" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" Editable="true" />
+        </MudItem>
+    </MudGrid>
+
+    <!-- INLINE NEW SUPPLIER CREATION BOX -->
+    @if (showNewSupplierBox)
+    {
+        <MudPaper Outlined="true" Class="pa-3 mt-3" Style="background-color: #e3f2fd;">
+            <MudText Typo="Typo.subtitle2" Class="mb-2"><b>Quick Add New Supplier</b></MudText>
+            <MudGrid>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="newSupplierName" Label="Supplier Name *" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="3">
+                    <MudTextField @bind-Value="newSupplierPhone" Label="Phone Number" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="3">
+                    <MudTextField @bind-Value="newSupplierAddress" Label="Address" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="2" Class="d-flex align-center gap-1">
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" OnClick="SaveQuickSupplier">Save</MudButton>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="@(() => showNewSupplierBox = false)">Cancel</MudButton>
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+    }
+</MudPaper>
+
+<!-- 2. ADD ITEMS TO PURCHASE BILL -->
+<MudPaper Elevation="2" Class="pa-4 mb-4">
+    <div class="d-flex justify-space-between align-center mb-3">
+        <MudText Typo="Typo.subtitle1" Style="font-weight:600;">Add Purchased Items</MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="@(() => showNewItemBox = !showNewItemBox)">
+            Item Not in List? Create New Item Here
+        </MudButton>
+    </div>
+
+    <!-- INLINE NEW ITEM CREATION BOX -->
+    @if (showNewItemBox)
+    {
+        <MudPaper Outlined="true" Class="pa-3 mb-4" Style="background-color: #fff8e1; border: 1px solid #ffb300;">
+            <MudText Typo="Typo.subtitle2" Color="Color.Warning" Class="mb-2"><b>+ Create New Inventory Item Inline</b></MudText>
+            <MudGrid>
+                <MudItem xs="12" sm="3">
+                    <MudTextField @bind-Value="newItemName" Label="Item Name (e.g. Toor Dal) *" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="2">
+                    <MudTextField @bind-Value="newItemCode" Label="Short Code (e.g. tdal)" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="2">
+                    <MudSelect T="int" @bind-Value="newItemUnitId" Label="Base Unit *" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        @foreach (var u in units)
+                        {
+                            <MudSelectItem Value="@u.Id">@u.Name (@u.ShortCode)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="2">
+                    <MudNumericField T="decimal" @bind-Value="newItemSellPrice" Label="Default Selling Price (₹) *" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="1">
+                    <MudNumericField T="decimal" @bind-Value="newItemMinStock" Label="Min Alert" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="2" Class="d-flex align-center gap-1">
+                    <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small" OnClick="SaveQuickItem">Create & Select</MudButton>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="@(() => showNewItemBox = false)">Close</MudButton>
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+    }
+
+    <!-- ROW INPUT FOR ADDING ITEM TO BILL -->
+    <MudGrid>
+        <MudItem xs="12" sm="4">
+            <MudSelect T="int" Label="Select Item" Value="selectedItemId" ValueChanged="OnItemSelected" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">-- Choose Item --</MudSelectItem>
+                @foreach (var item in items)
+                {
+                    <MudSelectItem Value="@item.Id">@item.Name (@item.Unit?.ShortCode) — Stock: @item.CurrentStock.ToString("0.###")</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudNumericField T="decimal" @bind-Value="entryQty" Label="Purchase Qty" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0.001m" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudNumericField T="decimal" @bind-Value="entryPurchasePrice" Label="Purchase Rate / Unit (₹)" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudNumericField T="decimal" @bind-Value="entryNewSellingPrice" Label="Selling Rate / Unit (₹)" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" />
+        </MudItem>
+        <MudItem xs="6" sm="2" Class="d-flex align-center">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" OnClick="AddLineToBill">+ Add Row</MudButton>
+        </MudItem>
+    </MudGrid>
+
+    <!-- PURCHASE BILL ITEMS TABLE -->
+    <MudSimpleTable Dense="true" Hover="true" Bordered="true" Class="mt-4">
+        <thead>
+            <tr style="background-color: #eeeeee;">
+                <th>Item Name</th>
+                <th>Qty Purchased</th>
+                <th>Purchase Rate (₹)</th>
+                <th>Updated Selling Rate (₹)</th>
+                <th>Line Total (₹)</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (!cartRows.Any())
+            {
+                <tr><td colspan="6" class="text-center pa-3">No items added to this purchase bill yet.</td></tr>
+            }
+            @foreach (var row in cartRows)
+            {
+                <tr>
+                    <td><b>@row.ItemName</b> (@row.UnitCode)</td>
+                    <td>@row.Quantity.ToString("0.###")</td>
+                    <td>₹@row.PurchaseUnitPrice.ToString("0.00")</td>
+                    <td>₹@row.NewSellingPrice.ToString("0.00")</td>
+                    <td><b>₹@row.LineTotal.ToString("0.00")</b></td>
+                    <td>
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="@(() => cartRows.Remove(row))" />
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+</MudPaper>
+
+<!-- 3. PAYMENT & SUPPLIER BALANCE SETTLEMENT -->
+<MudPaper Elevation="2" Class="pa-4">
+    <MudGrid>
+        <MudItem xs="12" sm="3">
+            <MudText Typo="Typo.h6">Total Bill: <b>₹@TotalBillAmount.ToString("0.00")</b></MudText>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudNumericField T="decimal" @bind-Value="paidAmount" Label="Amount Paid to Supplier Now (₹)" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" Max="@TotalBillAmount" />
+        </MudItem>
+        <MudItem xs="12" sm="2">
+            <MudSelect T="PaymentMode" @bind-Value="paymentMode" Label="Payment Mode" Disabled="@(paidAmount <= 0)" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="PaymentMode.Cash">Cash</MudSelectItem>
+                <MudSelectItem Value="PaymentMode.UPI">UPI</MudSelectItem>
+                <MudSelectItem Value="PaymentMode.BankTransfer">Bank Transfer</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="2" Class="d-flex align-center">
+            <MudText Color="@(BalancePayable > 0 ? Color.Error : Color.Success)">
+                <b>Credit / Due: ₹@BalancePayable.ToString("0.00")</b>
+            </MudText>
+        </MudItem>
+        <MudItem xs="12" sm="2" Class="d-flex align-center">
+            <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true" Size="Size.Large" OnClick="SavePurchaseBill">
+                Save Purchase
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+@code {
+    private List<Supplier> suppliers = [];
+    private List<Item> items = [];
+    private List<UnitOfMeasure> units = [];
+
+    private int selectedSupplierId = 0;
+    private string? supplierInvoiceNo;
+    private DateTime? purchaseDate = DateTime.Today;
+
+    // Inline Supplier Creation State
+    private bool showNewSupplierBox = false;
+    private string newSupplierName = "";
+    private string? newSupplierPhone;
+    private string? newSupplierAddress;
+
+    // Inline Item Creation State
+    private bool showNewItemBox = false;
+    private string newItemName = "";
+    private string? newItemCode;
+    private int newItemUnitId = 1;
+    private decimal newItemSellPrice = 0;
+    private decimal newItemMinStock = 5;
+
+    // Line Entry State
+    private int selectedItemId = 0;
+    private decimal entryQty = 1;
+    private decimal entryPurchasePrice = 0;
+    private decimal entryNewSellingPrice = 0;
+
+    // Bill Footer State (Default Paid Amount is strictly 0)
+    private decimal paidAmount = 0;
+    private PaymentMode paymentMode = PaymentMode.Cash;
+
+    private List<PurchaseCartRow> cartRows = [];
+    private decimal TotalBillAmount => cartRows.Sum(r => r.LineTotal);
+    private decimal BalancePayable => Math.Max(0, TotalBillAmount - paidAmount);
+
+    protected override async Task OnInitializedAsync()
+    {
+        units = await UnitService.GetUnitsAsync();
+        suppliers = await SupplierService.GetSuppliersAsync();
+        items = await ItemService.GetItemsAsync();
+    }
+
+    private void OnItemSelected(int itemId)
+    {
+        selectedItemId = itemId;
+        var item = items.FirstOrDefault(i => i.Id == itemId);
+        if (item != null)
+        {
+            entryPurchasePrice = item.AvgCostPrice;
+            entryNewSellingPrice = item.SellingPrice;
+        }
+    }
+
+    private async Task SaveQuickSupplier()
+    {
+        if (string.IsNullOrWhiteSpace(newSupplierName))
+        {
+            Snackbar.Add("Please enter Supplier Name.", Severity.Warning);
+            return;
+        }
+        var created = await SupplierService.CreateSupplierAsync(newSupplierName, newSupplierPhone, newSupplierAddress);
+        suppliers = await SupplierService.GetSuppliersAsync();
+        selectedSupplierId = created.Id;
+        newSupplierName = ""; newSupplierPhone = ""; newSupplierAddress = "";
+        showNewSupplierBox = false;
+        Snackbar.Add($"Supplier '{created.Name}' added and selected!", Severity.Success);
+    }
+
+    private async Task SaveQuickItem()
+    {
+        if (string.IsNullOrWhiteSpace(newItemName) || newItemSellPrice <= 0)
+        {
+            Snackbar.Add("Please enter Item Name and a valid Selling Price.", Severity.Warning);
+            return;
+        }
+        var created = await ItemService.CreateItemInlineAsync(newItemName, newItemCode, newItemUnitId, newItemSellPrice, newItemMinStock);
+        items = await ItemService.GetItemsAsync();
+        OnItemSelected(created.Id);
+        newItemName = ""; newItemCode = ""; newItemSellPrice = 0;
+        showNewItemBox = false;
+        Snackbar.Add($"Item '{created.Name}' created and selected for purchase!", Severity.Success);
+    }
+
+    private void AddLineToBill()
+    {
+        var item = items.FirstOrDefault(i => i.Id == selectedItemId);
+        if (item == null)
+        {
+            Snackbar.Add("Please select an item first.", Severity.Warning);
+            return;
+        }
+        if (entryQty <= 0 || entryPurchasePrice <= 0)
+        {
+            Snackbar.Add("Quantity and Purchase Rate must be greater than 0.", Severity.Warning);
+            return;
+        }
+        if (!item.Unit.AllowDecimals && entryQty % 1 != 0)
+        {
+            Snackbar.Add($"'{item.Name}' is measured in {item.Unit.ShortCode} and does not allow decimal quantities.", Severity.Error);
+            return;
+        }
+
+        cartRows.Add(new PurchaseCartRow
+        {
+            ItemId = item.Id,
+            ItemName = item.Name,
+            UnitCode = item.Unit.ShortCode,
+            Quantity = entryQty,
+            PurchaseUnitPrice = entryPurchasePrice,
+            NewSellingPrice = entryNewSellingPrice
+        });
+
+        selectedItemId = 0;
+        entryQty = 1;
+        entryPurchasePrice = 0;
+        entryNewSellingPrice = 0;
+        // paidAmount stays 0 by default unless user manually enters an amount
+    }
+
+    private async Task SavePurchaseBill()
+    {
+        if (selectedSupplierId == 0)
+        {
+            Snackbar.Add("Please select a Supplier.", Severity.Error);
+            return;
+        }
+        if (purchaseDate == null)
+        {
+            Snackbar.Add("Please select a valid Purchase Date.", Severity.Error);
+            return;
+        }
+        if (!cartRows.Any())
+        {
+            Snackbar.Add("Please add at least one item to the purchase bill.", Severity.Error);
+            return;
+        }
+        if (paidAmount < 0 || paidAmount > TotalBillAmount)
+        {
+            Snackbar.Add("Paid amount cannot be negative or greater than Total Bill Amount.", Severity.Error);
+            return;
+        }
+
+        var invoice = new PurchaseInvoice
+        {
+            SupplierId = selectedSupplierId,
+            SupplierInvoiceNo = supplierInvoiceNo,
+            InvoiceDate = purchaseDate.Value,
+            PaidAmount = paidAmount,
+            Items = cartRows.Select(r => new PurchaseInvoiceItem
+            {
+                ItemId = r.ItemId,
+                Quantity = r.Quantity,
+                PurchaseUnitPrice = r.PurchaseUnitPrice,
+                LineTotal = r.LineTotal
+            }).ToList()
+        };
+
+        var updatedSellingPrices = cartRows
+            .GroupBy(r => r.ItemId)
+            .ToDictionary(g => g.Key, g => g.Last().NewSellingPrice);
+
+        await PurchaseService.SavePurchaseInvoiceAsync(invoice, updatedSellingPrices, paymentMode);
+        Snackbar.Add("Purchase saved! Stock, Avg Cost, and Supplier Balance updated.", Severity.Success);
+        Nav.NavigateTo("/purchases");
+    }
+
+    private class PurchaseCartRow
+    {
+        public int ItemId { get; set; }
+        public string ItemName { get; set; } = "";
+        public string UnitCode { get; set; } = "";
+        public decimal Quantity { get; set; }
+        public decimal PurchaseUnitPrice { get; set; }
+        public decimal NewSellingPrice { get; set; }
+        public decimal LineTotal => Math.Round(Quantity * PurchaseUnitPrice, 2);
+    }
+}

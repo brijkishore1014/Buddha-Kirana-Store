@@ -1,0 +1,179 @@
+﻿@page "/expenses"
+@inject IExpenseService ExpenseService
+@inject ISnackbar Snackbar
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.h5" Style="font-weight:600;">Miscellaneous Shop Spends & Expenses</MudText>
+    <MudChip T="string" Color="Color.Error" Variant="Variant.Filled" Size="Size.Medium">
+        Total Filtered Spend: ₹@FilteredExpenses.Sum(e => e.Amount).ToString("0.00")
+    </MudChip>
+</div>
+
+<!-- 1. ADD NEW MISCELLANEOUS EXPENSE -->
+<MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-left: 5px solid #e53935;">
+    <MudText Typo="Typo.subtitle1" Class="mb-3" Style="font-weight:600;">+ Record New Miscellaneous Spend</MudText>
+    <MudGrid>
+        <MudItem xs="12" sm="2">
+            <MudDatePicker @bind-Date="expDate" Label="Spend Date *" MaxDate="@DateTime.Today" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" Editable="true" />
+        </MudItem>
+        <MudItem xs="12" sm="2">
+            <MudSelect T="string" @bind-Value="expCategory" Label="Category *" Variant="Variant.Outlined" Margin="Margin.Dense">
+                @foreach (var cat in categories)
+                {
+                    <MudSelectItem Value="@cat">@cat</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudTextField @bind-Value="expTitle" Label="Spend Description (e.g. Auto fare, Tea, Polybags) *" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudNumericField T="decimal" @bind-Value="expAmount" Label="Amount (₹) *" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0m" />
+        </MudItem>
+        <MudItem xs="6" sm="1">
+            <MudSelect T="PaymentMode" @bind-Value="expMode" Label="Mode" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="PaymentMode.Cash">Cash</MudSelectItem>
+                <MudSelectItem Value="PaymentMode.UPI">UPI</MudSelectItem>
+                <MudSelectItem Value="PaymentMode.BankTransfer">Bank</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="2" Class="d-flex align-center">
+            <MudButton Variant="Variant.Filled" Color="Color.Error" FullWidth="true" OnClick="SaveExpenseAsync">
+                + Save Spend
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<!-- 2. SEARCH & FILTER BAR -->
+<MudPaper Elevation="2" Class="pa-4 mb-3">
+    <MudGrid>
+        <MudItem xs="12" sm="4">
+            <MudTextField @bind-Value="searchString" Placeholder="Search by description or remarks..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudSelect T="string" @bind-Value="filterCategory" Label="Filter Category" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="@("ALL")">All Categories</MudSelectItem>
+                @foreach (var cat in categories)
+                {
+                    <MudSelectItem Value="@cat">@cat</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker @bind-Date="fromDate" Label="From Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="2">
+            <MudDatePicker @bind-Date="toDate" Label="To Date" Clearable="true" DateFormat="dd-MMM-yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" sm="1" Class="d-flex align-center">
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true" OnClick="ResetFilters">Reset</MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<!-- 3. PAGINATED EXPENSES LISTING -->
+<MudTable Items="@FilteredExpenses" Dense="true" Hover="true" Bordered="true" Striped="true" Elevation="2">
+    <HeaderContent>
+        <MudTh><MudTableSortLabel SortBy="new Func<ShopExpense, object>(x => x.ExpenseDate)">Date</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<ShopExpense, object>(x => x.Category)">Category</MudTableSortLabel></MudTh>
+        <MudTh>Description</MudTh>
+        <MudTh>Payment Mode</MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<ShopExpense, object>(x => x.Amount)">Amount (₹)</MudTableSortLabel></MudTh>
+        <MudTh>Action</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Date">@context.ExpenseDate.ToString("dd-MMM-yyyy")</MudTd>
+        <MudTd DataLabel="Category"><MudChip T="string" Size="Size.Small" Color="Color.Default">@context.Category</MudChip></MudTd>
+        <MudTd DataLabel="Description"><b>@context.Title</b></MudTd>
+        <MudTd DataLabel="Payment Mode">@context.PaymentMode</MudTd>
+        <MudTd DataLabel="Amount"><MudText Color="Color.Error" Style="font-weight:bold;">₹@context.Amount.ToString("0.00")</MudText></MudTd>
+        <MudTd DataLabel="Action">
+            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="@(() => DeleteExpense(context.Id))" />
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Class="pa-4">No miscellaneous spends recorded yet.</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new int[] { 10, 25, 50, 100 }" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private readonly string[] categories = [
+        "Transport / Auto / Hamali",
+        "Packaging / Polybags",
+        "Tea / Snacks / Staff Welfare",
+        "Electricity / Utility Bill",
+        "Shop Rent / Maintenance",
+        "Cleaning & Misc"
+    ];
+
+    private List<ShopExpense> expenses = [];
+
+    // New Entry State
+    private DateTime? expDate = DateTime.Today;
+    private string expCategory = "Transport / Auto / Hamali";
+    private string expTitle = "";
+    private decimal expAmount = 0;
+    private PaymentMode expMode = PaymentMode.Cash;
+
+    // Filter State
+    private string searchString = "";
+    private string filterCategory = "ALL";
+    private DateTime? fromDate;
+    private DateTime? toDate;
+
+    private IEnumerable<ShopExpense> FilteredExpenses => expenses.Where(e =>
+        (filterCategory == "ALL" || e.Category == filterCategory) &&
+        (!fromDate.HasValue || e.ExpenseDate.Date >= fromDate.Value.Date) &&
+        (!toDate.HasValue || e.ExpenseDate.Date <= toDate.Value.Date) &&
+        (string.IsNullOrWhiteSpace(searchString) ||
+         e.Title.Contains(searchString, StringComparison.OrdinalIgnoreCase) ||
+         e.Category.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+    );
+
+    protected override async Task OnInitializedAsync()
+    {
+        expenses = await ExpenseService.GetExpensesAsync();
+    }
+
+    private async Task SaveExpenseAsync()
+    {
+        if (string.IsNullOrWhiteSpace(expTitle) || expAmount <= 0 || expDate == null)
+        {
+            Snackbar.Add("Please enter a valid Description, Date, and Amount greater than 0.", Severity.Warning);
+            return;
+        }
+
+        await ExpenseService.AddExpenseAsync(new ShopExpense
+        {
+            ExpenseDate = expDate.Value,
+            Category = expCategory,
+            Title = expTitle.Trim(),
+            Amount = expAmount,
+            PaymentMode = expMode
+        });
+
+        expTitle = "";
+        expAmount = 0;
+        expenses = await ExpenseService.GetExpensesAsync();
+        Snackbar.Add("Miscellaneous spend recorded!", Severity.Success);
+    }
+
+    private async Task DeleteExpense(int id)
+    {
+        await ExpenseService.DeleteExpenseAsync(id);
+        expenses = await ExpenseService.GetExpensesAsync();
+        Snackbar.Add("Spend entry deleted.", Severity.Info);
+    }
+
+    private void ResetFilters()
+    {
+        searchString = "";
+        filterCategory = "ALL";
+        fromDate = null;
+        toDate = null;
+    }
+}
